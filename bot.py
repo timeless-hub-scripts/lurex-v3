@@ -12,8 +12,24 @@ try:
     from darcobfuscator import __version__
     from darcobfuscator.obfuscator import obfuscate as _local_obfuscate
 except Exception:
-    _local_obfuscate = None
-    __version__ = os.environ.get("LUREX_VERSION", os.environ.get("FINE_VERSION", "11.2"))
+    # The GitHub upload may flatten the package files at repository root.
+    # Load that root as the darcobfuscator package so relative imports still work.
+    try:
+        import importlib.util
+        _base_dir = os.path.dirname(os.path.abspath(__file__))
+        _spec = importlib.util.spec_from_file_location(
+            "darcobfuscator",
+            os.path.join(_base_dir, "__init__.py"),
+            submodule_search_locations=[_base_dir],
+        )
+        _pkg = importlib.util.module_from_spec(_spec)
+        sys.modules["darcobfuscator"] = _pkg
+        _spec.loader.exec_module(_pkg)
+        from darcobfuscator import __version__
+        from darcobfuscator.obfuscator import obfuscate as _local_obfuscate
+    except Exception:
+        _local_obfuscate = None
+        __version__ = os.environ.get("LUREX_VERSION", os.environ.get("FINE_VERSION", "11.2"))
 
 TOKEN = os.environ.get("TOKEN") or os.environ.get("DISCORD_TOKEN")
 MAX_BYTES = int(os.environ.get("MAX_BYTES", "1000000"))
@@ -141,12 +157,12 @@ def _loader_embed(script_name, loadstring, ephemeral_storage):
 
 def _key_embed(script_id, project_id=None, free=False):
     desc = [f"**Private owner key** (shown once — save it):", f"```\n{script_id}\n```",
-            "Manage with **`/manage`**, **`/keys`**, **`/access`** — anyone with this key controls the script."]
+            "Manage with **`/manage`**, **`/gkey`**, **`/whitelist`** — anyone with this key controls the script."]
     if project_id:
-        desc += ["", f"**Project ID** (public — for `/panel`):", f"`{project_id}`"]
+        desc += ["", f"**Project ID** (public — for `/deploy`):", f"`{project_id}`"]
         if not free:
-            desc += ["Key required: run **`/keys generate`** to mint keys, then post a "
-                     "**`/panel`** so buyers can redeem them."]
+            desc += ["Key required: run **`/gkey`** to mint keys, then post a "
+                     "**`/deploy`** so buyers can redeem them."]
         else:
             desc += ["Free: buyers can run it without a key."]
     e = discord.Embed(title="Owner & project keys", color=COL_KEY, description="\n".join(desc))
@@ -172,9 +188,9 @@ def _config_embed(name, silent, fast, free):
         lines += ["", "**Fast Mode drops security checks** for a quicker load. "
                   "Your script is easier to analyze — only use it if load time matters."]
     if not free:
-        lines += ["", "With a key required, generate keys with **`/keys`** and give buyers a "
-                  "**`/panel`** to redeem them. Each key is HWID-locked on first run."]
-    lines += ["", "Toggle the options, then press **Name & obfuscate**."]
+        lines += ["", "With a key required, generate keys with **`/gkey`** and give buyers a "
+                  "**`/deploy`** to redeem them. Each key is HWID-locked on first run."]
+    lines += ["", "Toggle the options, then press **Name & protect**."]
     e = discord.Embed(title="Configure your build", color=COL_PROC, description="\n".join(lines))
     e.set_footer(text=f"{BRAND} v{__version__}  •  executor build")
     return e
@@ -190,7 +206,7 @@ def _help_embed():
             "• Pick a **name**, then toggle **Silent** / **Fast** mode.\n"
             "• You get a private **script key** to update, freeze, or delete your script"
             "with `/manage` — the loadstring never changes.\n"
-            "• Use **`/obfuscate`** in a server for the same flow (ephemeral)."
+            "• Use **`/apply`** in a server for the same flow (ephemeral)."
         ),
     )
     e.set_footer(text=f"{BRAND} v{__version__}")
@@ -489,8 +505,30 @@ async def on_message(message):
     await _begin(message.author, "dm", att.filename, data, channel=message.channel)
 
 
-@bot.slash_command(name="obfuscate", description="Protect & host a Lua/Luau script", guild_ids=GUILD_IDS)
-async def obfuscate_cmd(ctx, file: discord.Option(discord.Attachment, description="Your .lua / .luau script")):
+create_group = bot.create_group("create", "Create and protect LUREX resources")
+apply_group = bot.create_group("apply", "Apply LUREX protection")
+deploy_group = bot.create_group("deploy", "Deploy LUREX resources")
+manage_group = bot.create_group("manage", "Manage LUREX resources")
+delete_group = bot.create_group("delete", "Delete LUREX resources")
+script_group = bot.create_group("script", "Inspect LUREX scripts")
+server_group = bot.create_group("server", "LUREX server utilities")
+setup_group = bot.create_group("setup", "LUREX setup utilities")
+
+
+@create_group.command(name="script", description="Protect and host a Lua/Luau script")
+async def create_script_cmd(ctx, file: discord.Option(discord.Attachment, description="Your .lua / .luau / .txt script")):
+    if not file.filename.lower().endswith(ALLOWED_EXT):
+        await ctx.respond(embed=_err_embed("Please attach a `.lua`, `.luau`, or `.txt` file."), ephemeral=True)
+        return
+    if file.size > MAX_BYTES:
+        await ctx.respond(embed=_err_embed(f"That file is {_human(file.size)} — the limit is {_human(MAX_BYTES)}."), ephemeral=True)
+        return
+    data = await file.read()
+    await _begin(ctx.author, "slash", file.filename, data, ctx=ctx)
+
+
+@apply_group.command(name="script", description="Protect and host a Lua/Luau script")
+async def apply_script_cmd(ctx, file: discord.Option(discord.Attachment, description="Your .lua / .luau script")):
     if not file.filename.lower().endswith(ALLOWED_EXT):
         await ctx.respond(embed=_err_embed("Please attach a `.lua` / `.luau` file."), ephemeral=True)
         return
@@ -502,8 +540,8 @@ async def obfuscate_cmd(ctx, file: discord.Option(discord.Attachment, descriptio
     await _begin(ctx.author, "slash", file.filename, data, ctx=ctx)
 
 
-@bot.slash_command(name="manage", description="Update, freeze or delete a hosted script by its key", guild_ids=GUILD_IDS)
-async def manage_cmd(
+@manage_group.command(name="scripts", description="Update, freeze, or delete a hosted script")
+async def manage_scripts_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["info", "update", "freeze", "unfreeze", "free", "paid", "delete"]),
     script_id: discord.Option(str, description="Your private script key"),
@@ -565,7 +603,7 @@ async def manage_cmd(
         await ctx.respond("Script **deleted** — its loadstring is now dead.", ephemeral=True)
 
 
-@bot.slash_command(name="keys", description="Generate, list or delete keys for your script", guild_ids=GUILD_IDS)
+@bot.slash_command(name="gkey", description="Generate, list or delete keys for your script", guild_ids=GUILD_IDS)
 async def keys_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["generate", "list", "delete"]),
@@ -591,7 +629,7 @@ async def keys_cmd(
             res = await _api_manage({"action": "listkeys", "script_id": script_id})
             ks = res.get("keys", [])
             if not ks:
-                await ctx.respond("No keys yet — generate some with `/keys generate`.", ephemeral=True)
+                await ctx.respond("No keys yet — generate some with `/gkey`.", ephemeral=True)
                 return
             lines = [f"`{k['key']}` — {'bound'if k['hwid_bound'] else 'unused'}"
                      + (f"· <@{k['discord_id']}>"if k.get("discord_id") else "") for k in ks[:40]]
@@ -608,7 +646,7 @@ async def keys_cmd(
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
-@bot.slash_command(name="access", description="Whitelist / blacklist a Discord user for your script", guild_ids=GUILD_IDS)
+@bot.slash_command(name="whitelist", description="Whitelist or blacklist a Discord user for your script", guild_ids=GUILD_IDS)
 async def access_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["whitelist", "blacklist", "clear", "list"]),
@@ -639,6 +677,143 @@ async def access_cmd(
         await ctx.respond(f"<@{user.id}> {verb}.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
+
+
+@script_group.command(name="info", description="Show hosted script information and its loader")
+async def script_info_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private owner key"),
+):
+    await ctx.defer(ephemeral=True)
+    if not _use_api():
+        await ctx.respond(embed=_err_embed("Script info needs the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
+        return
+    try:
+        res = await _api_manage({"action": "info", "script_id": script_id})
+        e = discord.Embed(title="Script info", color=COL_IDLE,
+                          description=f"**{res.get('name') or 'script'}**\\n```lua\\n{res.get('loadstring') or 'No loader available'}\\n```")
+        e.add_field(name="Project ID", value=f"`{res.get('project_id') or 'n/a'}`", inline=False)
+        e.add_field(name="Access", value="free" if res.get("free") else "key required", inline=True)
+        e.add_field(name="Keys", value=str(res.get("keys", 0)), inline=True)
+        e.add_field(name="Frozen", value="yes" if res.get("frozen") else "no", inline=True)
+        e.set_footer(text=f"{BRAND} v{__version__}")
+        await ctx.respond(embed=e, ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+
+@delete_group.command(name="script", description="Delete a hosted script")
+async def delete_script_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private owner key"),
+):
+    await ctx.defer(ephemeral=True)
+    try:
+        res = await _api_manage({"action": "delete", "script_id": script_id})
+        await ctx.respond("Script **deleted** — its loadstring is now dead." if res.get("deleted", True) else "Script not found.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+
+@bot.slash_command(name="delkey", description="Delete one access key from a script", guild_ids=GUILD_IDS)
+async def delkey_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private owner key"),
+    key: discord.Option(str, description="The access key to delete"),
+):
+    await ctx.defer(ephemeral=True)
+    try:
+        res = await _api_manage({"action": "delkey", "script_id": script_id, "key": key})
+        await ctx.respond("Key deleted." if res.get("deleted") else "Key not found.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+
+@bot.slash_command(name="blacklist", description="Blacklist a Discord user for a script", guild_ids=GUILD_IDS)
+async def blacklist_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private owner key"),
+    user: discord.Option(discord.User, description="Target user"),
+):
+    await ctx.defer(ephemeral=True)
+    try:
+        await _api_manage({"action": "blacklist", "script_id": script_id, "discord_id": str(user.id)})
+        await ctx.respond(f"<@{user.id}> was blacklisted.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+
+@bot.slash_command(name="cmds", description="Show all LUREX commands", guild_ids=GUILD_IDS)
+async def cmds_cmd(ctx):
+    await ctx.defer(ephemeral=True)
+    e = discord.Embed(title="LUREX commands", color=COL_IDLE, description=(
+        "**Create & apply**\\n`/create script` · `/apply script`\\n\\n"
+        "**Deploy & manage**\\n`/deploy panel` · `/script info` · `/manage scripts` · `/delete script`\\n\\n"
+        "**Keys & access**\\n`/gkey` · `/kmassgen` · `/delkey` · `/whitelist` · `/blacklist` · `/whitelist-role`\\n\\n"
+        "**Help**\\n`/cmds` · `/server link` · `/setup guide`"
+    ))
+    e.set_footer(text=f"{BRAND} v{__version__}")
+    await ctx.respond(embed=e, ephemeral=True)
+
+
+@server_group.command(name="link", description="Show the configured LUREX Discord invite")
+async def server_link_cmd(ctx):
+    await ctx.defer(ephemeral=True)
+    invite = os.environ.get("SERVER_INVITE") or os.environ.get("DISCORD_INVITE")
+    if invite:
+        await ctx.respond(f"Join the LUREX server: {invite}", ephemeral=True)
+    else:
+        await ctx.respond(embed=_err_embed("No invite is configured. Set `SERVER_INVITE` on the bot service."), ephemeral=True)
+
+
+@setup_group.command(name="guide", description="Show the LUREX setup guide")
+async def setup_guide_cmd(ctx):
+    await ctx.defer(ephemeral=True)
+    e = discord.Embed(title="LUREX setup guide", color=COL_IDLE, description=(
+        "1. Set `TOKEN`, `OBF_BACKEND=api`, `API_URL`, and `BOT_SHARED_SECRET`.\\n"
+        "2. Invite the bot with the `bot` and `applications.commands` scopes.\\n"
+        "3. Run `/create script` or `/apply script` with a Lua, Luau, or TXT file.\\n"
+        "4. Save the private owner key, then use `/gkey` and `/deploy panel` for gated access."
+    ))
+    e.set_footer(text=f"{BRAND} v{__version__}")
+    await ctx.respond(embed=e, ephemeral=True)
+
+
+@bot.slash_command(name="kmassgen", description="Generate up to 100 access keys at once", guild_ids=GUILD_IDS)
+async def kmassgen_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private owner key"),
+    amount: discord.Option(int, description="Number of keys", required=False, default=10),
+    label: discord.Option(str, description="Optional label", required=False, default=None),
+):
+    await ctx.defer(ephemeral=True)
+    try:
+        res = await _api_manage({"action": "genkey", "script_id": script_id, "count": max(1, min(amount, 100)), "label": label})
+        keys = res.get("keys", [])
+        e = discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="```\\n" + "\\n".join(keys) + "\\n```")
+        e.set_footer(text=f"{BRAND} v{__version__}")
+        await ctx.respond(embed=e, ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+
+@bot.slash_command(name="whitelist-role", description="Whitelist every member of a Discord role", guild_ids=GUILD_IDS)
+async def whitelist_role_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private owner key"),
+    role: discord.Option(discord.Role, description="Role whose members should be whitelisted"),
+):
+    await ctx.defer(ephemeral=True)
+    members = list(role.members)
+    if not members:
+        await ctx.respond(f"No members found in {role.mention}.", ephemeral=True)
+        return
+    try:
+        for member in members[:100]:
+            await _api_manage({"action": "whitelist", "script_id": script_id, "discord_id": str(member.id)})
+        await ctx.respond(f"Whitelisted {min(len(members), 100)} member(s) from {role.mention}.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
 
 
 PANEL_BLURB = ("Redeem your key, grab your loader, and manage your HWID — all self-service. "
@@ -772,8 +947,8 @@ class PanelView(discord.ui.View):
         await interaction.followup.send(embed=e, ephemeral=True)
 
 
-@bot.slash_command(name="panel", description="Post a public control panel for a script", guild_ids=GUILD_IDS)
-async def panel_cmd(
+@deploy_group.command(name="panel", description="Post a public control panel for a script")
+async def deploy_panel_cmd(
     ctx,
     project_id: discord.Option(str, description="The public project ID of the script"),
     buyer_role: discord.Option(discord.Role, description="Role to grant verified buyers"),
