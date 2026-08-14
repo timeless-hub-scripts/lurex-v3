@@ -491,6 +491,7 @@ async def on_message(message):
 
 @bot.slash_command(name="obfuscate", description="Protect & host a Lua/Luau script", guild_ids=GUILD_IDS)
 async def obfuscate_cmd(ctx, file: discord.Option(discord.Attachment, description="Your .lua / .luau script")):
+    await ctx.defer(ephemeral=True)
     if not file.filename.lower().endswith(ALLOWED_EXT):
         await ctx.respond(embed=_err_embed("Please attach a `.lua` / `.luau` file."), ephemeral=True)
         return
