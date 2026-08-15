@@ -739,7 +739,7 @@ async def access_cmd(
             await ctx.respond(embed=e, ephemeral=True)
             return
         if user is None:
-            await ctx.respond(embed=_err_embed("Pick a `user`."), ephemeral=True)
+            await ctx.respond("Choose a Discord `user` to whitelist, blacklist, or remove from this script.", ephemeral=True)
             return
         act = "unlist"if action == "clear"else action
         await _api_manage({"action": act, "script_id": script_id, "discord_id": str(user.id)})
@@ -847,18 +847,22 @@ async def server_link_cmd(ctx):
 @setup_group.command(name="guide", description="Show the LUREX setup guide")
 async def setup_guide_cmd(ctx):
     await ctx.defer(ephemeral=True)
-    e = discord.Embed(title="LUREX setup guide", color=COL_IDLE, description=(
-        "**1 — Create a script**\\n"
-        "Run `/create script`, attach a `.lua`, `.luau`, or `.txt` file, then choose the name and protection options. Save the private owner key exactly as shown.\\n\\n"
-        "**2 — Manage the script**\\n"
-        "Use `/script info` for the project ID and loader. Use `/manage scripts` to switch free/paid access, freeze, update, or delete.\\n\\n"
-        "**3 — Create keys or whitelist users**\\n"
-        "Use `/gkey` or `/kmassgen` to make keys in `LUREX-123-456-789` format. Use `/whitelist` to give a user access without a key.\\n\\n"
-        "**4 — Deploy a panel**\\n"
-        "Run `/deploy panel` and choose the title, description, hex embed color, HWID reset setting, visible buttons, and emoji setting.\\n\\n"
-        "**5 — Copy values**\\n"
-        "Keys, owner keys, project IDs, and loadstrings are returned in PC and mobile copy blocks. Never share an owner key publicly."
-    ))
+    e = discord.Embed(
+        title="HOW TO SETUP LUREX SCRIPTS AND PANELS",
+        color=COL_IDLE,
+        description=(
+            "**1. RUN `/create script`**\\n"
+            "**2. UPLOAD YOUR FILE**\\n"
+            "**3. SELECT YOUR NAME**\\n"
+            "**4. SELECT FREE OR PAID**\\n"
+            "**5. IF FREE, COPY YOUR LOADER AND YOU'RE GOOD TO GO!**\\n"
+            "**6. IF PAID, YOU WILL GET 3 KEYS:** `OWNER-` · `SCRIPT_ID-` · `PROJECT-`\\n"
+            "**7. USE `/deploy panel`** — enter your Script ID, choose any buyer roles, and set your customisation options.\\n"
+            "**8. USE `/setadmin`** — this controls who can update and manage your scripts.\\n"
+            "**9. RUN `/setwl`** — this sets your whitelist permissions.\\n"
+            "**10. USE `/manage scripts`** — edit your script preferences."
+        )
+    )
     e.set_footer(text=f"{BRAND} v{__version__}")
     await ctx.respond(embed=e, ephemeral=True)
 
