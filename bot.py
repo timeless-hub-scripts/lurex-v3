@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import os
 import sys
 import time
@@ -36,6 +37,7 @@ MAX_BYTES = int(os.environ.get("MAX_BYTES", "1000000"))
 API_URL = os.environ.get("API_URL", "https://<your-project>.vercel.app/api")
 OBF_BACKEND = os.environ.get("OBF_BACKEND", "local").lower()
 BOT_SHARED_SECRET = os.environ.get("BOT_SHARED_SECRET")
+OWNER_VIEW_IDS = {x.strip() for x in os.environ.get("OWNER_VIEW_IDS", "").split(",") if x.strip()}
 GUILD_IDS = [int(g) for g in os.environ.get("GUILD_IDS", "").replace(" ", "").split(",") if g.isdigit()] or None
 ALLOWED_EXT = (".lua", ".luau", ".txt")
 
@@ -219,6 +221,7 @@ class Session:
         self.filename = filename
         self.data = data
         self.channel = channel
+        self.server_id = None
         self.default_name = os.path.splitext(filename)[0][:64] or "script"
         self.name = self.default_name
         self.silent = False
@@ -306,7 +309,8 @@ async def _do(responder, session):
         source = session.data.decode("utf-8", "replace")
         await asyncio.sleep(0.4)
         state["stage"], state["target"] = "Compiling & virtualizing", 60.0
-        result = await _service_build(source, opts, owner=str(session.author_id))
+        owner_meta = json.dumps({"user_id": str(session.author_id), "server_id": str(session.server_id or "")})
+        result = await _service_build(source, opts, owner=owner_meta)
         state["stage"], state["target"] = "Hosting & packaging", 95.0
         await asyncio.sleep(0.3)
     except SyntaxError as e:
@@ -473,6 +477,7 @@ async def on_ready():
 
 async def _begin(author, origin, filename, data, channel=None, ctx=None):
     session = Session(author.id, origin, filename, data, channel)
+    session.server_id = str(getattr(ctx, "guild_id", "") or "") if ctx is not None else ""
     embed = _config_embed(filename, session.silent, session.full_protect, session.free)
     view = ConfigView(session)
     if origin == "slash":
@@ -791,6 +796,115 @@ async def setup_guide_cmd(ctx):
     e.set_footer(text=f"{BRAND} v{__version__}")
     await ctx.respond(embed=e, ephemeral=True)
 
+
+owner_group = bot.create_group("owner", "Restricted LUREX owner tools")
+
+@owner_group.command(name="view", description="View the restricted LUREX owner audit")
+async def owner_view_cmd(ctx):
+    await ctx.defer(ephemeral=True)
+    if str(ctx.author.id) not in OWNER_VIEW_IDS:
+        await ctx.respond(embed=_err_embed("You are not authorized to use `/owner view`."), ephemeral=True)
+        return
+    try:
+        res = await _api_manage({"action": "owner_view", "actor_id": str(ctx.author.id)})
+        scripts = res.get("scripts", [])
+        audit = res.get("audit", [])
+        lines = []
+        for item in scripts[:50]:
+            owner_text = str(item.get("owner") or "unknown")
+            try:
+                owner_meta = json.loads(owner_text)
+                owner_text = f"user `{owner_meta.get('user_id') or 'unknown'}` · server `{owner_meta.get('server_id') or 'DM'}`"
+            except Exception:
+                owner_text = f"owner `{owner_text}`"
+            lines.append(f"`{item.get('sid') or 'n/a'}` — **{item.get('name') or 'unnamed'}** — {owner_text}")
+        if not lines:
+            lines.append("No scripts recorded.")
+        e = discord.Embed(title="LUREX owner audit", color=COL_IDLE, description="\\n".join(lines))
+        e.add_field(name="Audit events", value=str(len(audit)), inline=True)
+        e.set_footer(text="Restricted owner view • do not share this response")
+        await ctx.respond(embed=e, ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+@bot.slash_command(name="setadmin", description="Give a member or role owner-style script management access", guild_ids=GUILD_IDS)
+async def setadmin_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private OWNER- key"),
+    member: discord.Option(discord.Member, description="Member to authorize", required=False, default=None),
+    role: discord.Option(discord.Role, description="Role to authorize", required=False, default=None),
+    enabled: discord.Option(bool, description="Enable or remove access", required=False, default=True),
+):
+    await ctx.defer(ephemeral=True)
+    if (member is None) == (role is None):
+        await ctx.respond(embed=_err_embed("Choose exactly one `member` or `role`."), ephemeral=True)
+        return
+    subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
+    try:
+        res = await _api_manage({"action": "setadmin", "script_id": script_id, "subject_type": subject_type, "subject_id": subject_id, "enabled": enabled})
+        state = "enabled" if enabled else "removed"
+        await ctx.respond(f"Owner-style management access **{state}** for {label}.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+@bot.slash_command(name="setwl", description="Set who may manage whitelist, blacklist, and keys", guild_ids=GUILD_IDS)
+async def setwl_cmd(
+    ctx,
+    script_id: discord.Option(str, description="Your private OWNER- key"),
+    scope: discord.Option(str, description="Permission scope", choices=["all", "whitelist", "blacklist", "generate", "bulkgen"]),
+    member: discord.Option(discord.Member, description="Member to authorize", required=False, default=None),
+    role: discord.Option(discord.Role, description="Role to authorize", required=False, default=None),
+    enabled: discord.Option(bool, description="Enable or remove access", required=False, default=True),
+):
+    await ctx.defer(ephemeral=True)
+    if (member is None) == (role is None):
+        await ctx.respond(embed=_err_embed("Choose exactly one `member` or `role`."), ephemeral=True)
+        return
+    subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
+    try:
+        await _api_manage({"action": "setwl", "script_id": script_id, "subject_type": subject_type, "subject_id": subject_id, "scope": scope, "enabled": enabled})
+        state = "enabled" if enabled else "removed"
+        await ctx.respond(f"`{scope}` permission **{state}** for {label}.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+@bot.slash_command(name="admin", description="Use delegated project-management permissions", guild_ids=GUILD_IDS)
+async def admin_cmd(
+    ctx,
+    action: discord.Option(str, description="Management action", choices=["info", "freeze", "unfreeze", "free", "paid", "keys", "generate", "whitelist", "blacklist", "clear"]),
+    project_id: discord.Option(str, description="The PROJECT- ID you were delegated for"),
+    user: discord.Option(discord.User, description="Target user for access actions", required=False, default=None),
+    amount: discord.Option(int, description="Number of keys for generate", required=False, default=1),
+    confirm: discord.Option(bool, description="Confirm this action", required=False, default=False),
+):
+    await ctx.defer(ephemeral=True)
+    if action in ("whitelist", "blacklist", "clear") and user is None:
+        await ctx.respond(embed=_err_embed("Choose a target `user` for this access action."), ephemeral=True)
+        return
+    if action in ("freeze", "unfreeze", "free", "paid") and not confirm:
+        await ctx.respond(embed=_err_embed("Set `confirm` to true for this state-changing action."), ephemeral=True)
+        return
+    action_map = {"free": "set_free", "paid": "set_free", "keys": "listkeys", "generate": "genkey", "clear": "unlist"}
+    api_action = action_map.get(action, action)
+    payload = {"action": api_action, "project": project_id, "actor_id": str(ctx.author.id)}
+    if action in ("free", "paid"):
+        payload["free"] = action == "free"
+    if action == "generate":
+        payload["count"] = max(1, min(int(amount or 1), 100))
+    if action in ("whitelist", "blacklist", "clear"):
+        payload["discord_id"] = str(user.id)
+    try:
+        res = await _api_manage(payload)
+        if action == "generate":
+            keys = res.get("keys", [])
+            await ctx.respond(embed=discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="\\n".join(f"`{k}`" for k in keys)), ephemeral=True)
+        elif action == "keys":
+            keys = res.get("keys", [])
+            await ctx.respond("\\n".join(f"`{k.get('key')}`" for k in keys[:50]) or "No keys.", ephemeral=True)
+        else:
+            await ctx.respond(f"Delegated action `{action}` completed for `{project_id}`.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
 
 @bot.slash_command(name="kmassgen", description="Generate up to 100 access keys at once", guild_ids=GUILD_IDS)
 async def kmassgen_cmd(
