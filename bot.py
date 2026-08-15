@@ -209,7 +209,7 @@ def _help_embed():
             "• Pick a **name**, then toggle **Silent** / **FULL PROTECT** mode.\n"
             "• You get a private **script key** to update, freeze, or delete your script"
             "with `/manage` — the loadstring never changes.\n"
-            "• Use **`/apply`** in a server for the same flow (ephemeral)."
+
         ),
     )
     e.set_footer(text=f"{BRAND} v{__version__}")
@@ -575,7 +575,6 @@ async def on_message(message):
 
 
 create_group = bot.create_group("create", "Create and protect LUREX resources")
-apply_group = bot.create_group("apply", "Apply LUREX protection")
 deploy_group = bot.create_group("deploy", "Deploy LUREX resources")
 manage_group = bot.create_group("manage", "Manage LUREX resources")
 delete_group = bot.create_group("delete", "Delete LUREX resources")
@@ -592,19 +591,6 @@ async def create_script_cmd(ctx, file: discord.Option(discord.Attachment, descri
         return
     if file.size > MAX_BYTES:
         await ctx.respond(embed=_err_embed(f"That file is {_human(file.size)} — the limit is {_human(MAX_BYTES)}."), ephemeral=True)
-        return
-    data = await file.read()
-    await _begin(ctx.author, "slash", file.filename, data, ctx=ctx)
-
-
-@apply_group.command(name="script", description="Protect and host a Lua/Luau script")
-async def apply_script_cmd(ctx, file: discord.Option(discord.Attachment, description="Your .lua / .luau script")):
-    if not file.filename.lower().endswith(ALLOWED_EXT):
-        await ctx.respond(embed=_err_embed("Please attach a `.lua` / `.luau` file."), ephemeral=True)
-        return
-    if file.size > MAX_BYTES:
-        await ctx.respond(embed=_err_embed(
-            f"That file is {_human(file.size)} — the limit is {_human(MAX_BYTES)}."), ephemeral=True)
         return
     data = await file.read()
     await _begin(ctx.author, "slash", file.filename, data, ctx=ctx)
@@ -769,7 +755,7 @@ async def script_info_cmd(
     try:
         res = await _api_manage({"action": "info", "script_id": script_id})
         e = discord.Embed(title="Script info", color=COL_IDLE,
-                          description=f"**{res.get('name') or 'script'}**\\n```lua\\n{res.get('loadstring') or 'No loader available'}\\n```")
+                          description=f"**{res.get('name') or 'script'}**\n```lua\n{res.get('loadstring') or 'No loader available'}\n```")
         e.add_field(name="Project ID", value=f"`{res.get('project_id') or 'n/a'}`", inline=False)
         e.add_field(name="Access", value="free" if res.get("free") else "key required", inline=True)
         e.add_field(name="Keys", value=str(res.get("keys", 0)), inline=True)
@@ -777,7 +763,7 @@ async def script_info_cmd(
         e.set_footer(text=f"{BRAND} v{__version__}")
         await ctx.respond(embed=e, ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
 @delete_group.command(name="script", description="Delete a hosted script")
@@ -790,7 +776,7 @@ async def delete_script_cmd(
         res = await _api_manage({"action": "delete", "script_id": script_id})
         await ctx.respond("Script **deleted** — its loadstring is now dead." if res.get("deleted", True) else "Script not found.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
 @bot.slash_command(name="delkey", description="Delete one access key from a script", guild_ids=GUILD_IDS)
@@ -804,7 +790,7 @@ async def delkey_cmd(
         res = await _api_manage({"action": "delkey", "script_id": script_id, "key": key})
         await ctx.respond("Key deleted." if res.get("deleted") else "Key not found.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
 @bot.slash_command(name="blacklist", description="Blacklist a Discord user for a script", guild_ids=GUILD_IDS)
@@ -818,17 +804,17 @@ async def blacklist_cmd(
         await _api_manage({"action": "blacklist", "script_id": script_id, "discord_id": str(user.id)})
         await ctx.respond(f"<@{user.id}> was blacklisted.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
 @bot.slash_command(name="cmds", description="Show all LUREX commands", guild_ids=GUILD_IDS)
 async def cmds_cmd(ctx):
     await ctx.defer(ephemeral=True)
     e = discord.Embed(title="LUREX commands", color=COL_IDLE, description=(
-        "**Create & apply**\\n`/create script` · `/apply script`\\n\\n"
-        "**Deploy & manage**\\n`/deploy panel` · `/script info` · `/manage scripts` · `/delete script`\\n\\n"
-        "**Keys & access**\\n`/gkey` · `/kmassgen` · `/delkey` · `/whitelist` · `/blacklist` · `/whitelist-role`\\n\\n"
-        "**Help**\\n`/cmds` · `/server link` · `/setup guide`"
+        "**Create**\n`/create script`\n\n"
+        "**Deploy & manage**\n`/deploy panel` · `/script info` · `/manage scripts` · `/delete script`\n\n"
+        "**Keys & access**\n`/gkey` · `/kmassgen` · `/delkey` · `/whitelist` · `/blacklist` · `/whitelist-role`\n\n"
+        "**Help**\n`/cmds` · `/server link` · `/setup guide`"
     ))
     e.set_footer(text=f"{BRAND} v{__version__}")
     await ctx.respond(embed=e, ephemeral=True)
@@ -851,15 +837,15 @@ async def setup_guide_cmd(ctx):
         title="HOW TO SETUP LUREX SCRIPTS AND PANELS",
         color=COL_IDLE,
         description=(
-            "**1. RUN `/create script`**\\n"
-            "**2. UPLOAD YOUR FILE**\\n"
-            "**3. SELECT YOUR NAME**\\n"
-            "**4. SELECT FREE OR PAID**\\n"
-            "**5. IF FREE, COPY YOUR LOADER AND YOU'RE GOOD TO GO!**\\n"
-            "**6. IF PAID, YOU WILL GET 3 KEYS:** `OWNER-` · `SCRIPT_ID-` · `PROJECT-`\\n"
-            "**7. USE `/deploy panel`** — enter your Script ID, choose any buyer roles, and set your customisation options.\\n"
-            "**8. USE `/setadmin`** — this controls who can update and manage your scripts.\\n"
-            "**9. RUN `/setwl`** — this sets your whitelist permissions.\\n"
+            "**1. RUN `/create script`**\n"
+            "**2. UPLOAD YOUR FILE**\n"
+            "**3. SELECT YOUR NAME**\n"
+            "**4. SELECT FREE OR PAID**\n"
+            "**5. IF FREE, COPY YOUR LOADER AND YOU'RE GOOD TO GO!**\n"
+            "**6. IF PAID, YOU WILL GET 3 KEYS:** `OWNER-` · `SCRIPT_ID-` · `PROJECT-`\n"
+            "**7. USE `/deploy panel`** — enter your Script ID, choose any buyer roles, and set your customisation options.\n"
+            "**8. USE `/setadmin`** — this controls who can update and manage your scripts.\n"
+            "**9. RUN `/setwl`** — this sets your whitelist permissions.\n"
             "**10. USE `/manage scripts`** — edit your script preferences."
         )
     )
@@ -890,12 +876,12 @@ async def owner_view_cmd(ctx):
             lines.append(f"`{item.get('sid') or 'n/a'}` — **{item.get('name') or 'unnamed'}** — {owner_text}")
         if not lines:
             lines.append("No scripts recorded.")
-        e = discord.Embed(title="LUREX owner audit", color=COL_IDLE, description="\\n".join(lines))
+        e = discord.Embed(title="LUREX owner audit", color=COL_IDLE, description="\n".join(lines))
         e.add_field(name="Audit events", value=str(len(audit)), inline=True)
         e.set_footer(text="Restricted owner view • do not share this response")
         await ctx.respond(embed=e, ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 class ScriptSelectView(discord.ui.View):
     def __init__(self, author_id, scripts, callback):
@@ -929,7 +915,7 @@ class ScriptSelectView(discord.ui.View):
         try:
             await self.callback_fn(interaction, selected)
         except Exception as exc:
-            await interaction.followup.send(embed=_err_embed(f"```\\n{str(exc)[:400]}\\n```"), ephemeral=True)
+            await interaction.followup.send(embed=_err_embed(f"```\n{str(exc)[:400]}\n```"), ephemeral=True)
         self.stop()
 
 async def _show_script_picker(ctx, callback):
@@ -961,7 +947,7 @@ async def setadmin_cmd(
         state = "enabled" if enabled else "removed"
         await ctx.respond(f"Owner-style management access **{state}** for {label}.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 @bot.slash_command(name="setwl", description="Set who may manage whitelist, blacklist, and keys", guild_ids=GUILD_IDS)
 async def setwl_cmd(
@@ -983,7 +969,7 @@ async def setwl_cmd(
         state = "enabled" if enabled else "removed"
         await ctx.respond(f"`{scope}` permission **{state}** for {label}.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 @bot.slash_command(name="rmwl", description="Revoke a member or role's whitelist-management permissions", guild_ids=GUILD_IDS)
 async def rmwl_cmd(
@@ -1003,7 +989,7 @@ async def rmwl_cmd(
                            "subject_id": subject_id, "scope": scope})
         await ctx.respond(f"WL permission `{scope}` was revoked for {label}.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 @edit_group.command(name="panel", description="Edit the saved panel look for one of your scripts")
 async def edit_panel_cmd(
@@ -1020,14 +1006,14 @@ async def edit_panel_cmd(
     emojis: discord.Option(bool, description="Show emojis on buttons", required=False, default=False),
 ):
     await ctx.defer(ephemeral=True)
-    async def apply(interaction, script_id):
+    async def save_panel(interaction, script_id):
         await _api_manage({"action": "set_panel", "script_id": script_id, "actor_id": str(ctx.author.id),
                            "title": title, "desc": description, "color": embed_color,
                            "hwid_resets": hwid_resets, "show_redeem": show_redeem,
                            "show_get_script": show_get_script, "show_hwid": show_hwid,
                            "show_buyer": show_buyer, "show_key_info": show_key_info, "emojis": emojis})
         await interaction.followup.send(f"Panel settings saved for `{script_id}`. Use `/deploy panel` to post it.", ephemeral=True)
-    await _show_script_picker(ctx, apply)
+    await _show_script_picker(ctx, save_panel)
 
 @bot.slash_command(name="admin", description="Use delegated project-management permissions", guild_ids=GUILD_IDS)
 async def admin_cmd(
@@ -1058,14 +1044,14 @@ async def admin_cmd(
         res = await _api_manage(payload)
         if action == "generate":
             keys = res.get("keys", [])
-            await ctx.respond(embed=discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="\\n".join(f"`{k}`" for k in keys)), ephemeral=True)
+            await ctx.respond(embed=discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="\n".join(f"`{k}`" for k in keys)), ephemeral=True)
         elif action == "keys":
             keys = res.get("keys", [])
-            await ctx.respond("\\n".join(f"`{k.get('key')}`" for k in keys[:50]) or "No keys.", ephemeral=True)
+            await ctx.respond("\n".join(f"`{k.get('key')}`" for k in keys[:50]) or "No keys.", ephemeral=True)
         else:
             await ctx.respond(f"Delegated action `{action}` completed for `{project_id}`.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 @bot.slash_command(name="kmassgen", description="Generate up to 100 access keys at once", guild_ids=GUILD_IDS)
 async def kmassgen_cmd(
@@ -1078,11 +1064,11 @@ async def kmassgen_cmd(
     try:
         res = await _api_manage({"action": "genkey", "script_id": script_id, "count": max(1, min(amount, 100)), "label": label})
         keys = res.get("keys", [])
-        e = discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="```\\n" + "\\n".join(keys) + "\\n```")
+        e = discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="```\n" + "\n".join(keys) + "\n```")
         e.set_footer(text=f"{BRAND} v{__version__}")
         await ctx.respond(embed=e, ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
 @bot.slash_command(name="whitelist-role", description="Whitelist every member of a Discord role", guild_ids=GUILD_IDS)
@@ -1101,7 +1087,7 @@ async def whitelist_role_cmd(
             await _api_manage({"action": "whitelist", "script_id": script_id, "discord_id": str(member.id)})
         await ctx.respond(f"Whitelisted {min(len(members), 100)} member(s) from {role.mention}.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
 PANEL_BLURB = ("Redeem a key, grab your loader, and manage access from one panel. "
@@ -1142,7 +1128,7 @@ class RedeemModal(discord.ui.Modal):
             await _api_manage({"action": "redeem", "project": self.project,
                                "discord_id": str(interaction.user.id), "key": key})
         except Exception as e:
-            await interaction.followup.send(embed=_err_embed(f"```\\n{str(e)[:300]}\\n```"), ephemeral=True)
+            await interaction.followup.send(embed=_err_embed(f"```\n{str(e)[:300]}\n```"), ephemeral=True)
             return
         await interaction.followup.send("Key redeemed. Use **Get Script** to receive your loader.", ephemeral=True)
 
@@ -1190,10 +1176,10 @@ class PanelView(discord.ui.View):
         try:
             res = await self._act(interaction, "get_script")
         except Exception as e:
-            await interaction.followup.send(embed=_err_embed(f"```\\n{str(e)[:300]}\\n```"), ephemeral=True)
+            await interaction.followup.send(embed=_err_embed(f"```\n{str(e)[:300]}\n```"), ephemeral=True)
             return
         e = discord.Embed(title="Your loader", color=COL_OK,
-                          description="Copy the value below into your executor:\\n" + _loader_lines(res["loadstring"]))
+                          description="Copy the value below into your executor:\n" + _loader_lines(res["loadstring"]))
         e.set_footer(text=f"{BRAND} v{__version__}")
         await interaction.followup.send(embed=e, ephemeral=True)
     @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.secondary)
@@ -1203,7 +1189,7 @@ class PanelView(discord.ui.View):
         try:
             await self._act(interaction, "reset_hwid")
         except Exception as e:
-            await interaction.followup.send(embed=_err_embed(f"```\\n{str(e)[:300]}\\n```"), ephemeral=True)
+            await interaction.followup.send(embed=_err_embed(f"```\n{str(e)[:300]}\n```"), ephemeral=True)
             return
         await interaction.followup.send("HWID reset — your key rebinds on next launch.", ephemeral=True)
     @discord.ui.button(label="Get Buyer Role", style=discord.ButtonStyle.secondary)
@@ -1213,7 +1199,7 @@ class PanelView(discord.ui.View):
         try:
             res = await self._act(interaction, "buyer_check")
         except Exception as e:
-            await interaction.followup.send(embed=_err_embed(f"```\\n{str(e)[:300]}\\n```"), ephemeral=True)
+            await interaction.followup.send(embed=_err_embed(f"```\n{str(e)[:300]}\n```"), ephemeral=True)
             return
         if not res.get("eligible"):
             await interaction.followup.send("Redeem a valid key or ask the owner to whitelist you first.", ephemeral=True)
@@ -1236,7 +1222,7 @@ class PanelView(discord.ui.View):
         try:
             res = await self._act(interaction, "key_info")
         except Exception as e:
-            await interaction.followup.send(embed=_err_embed(f"```\\n{str(e)[:300]}\\n```"), ephemeral=True)
+            await interaction.followup.send(embed=_err_embed(f"```\n{str(e)[:300]}\n```"), ephemeral=True)
             return
         if not res.get("redeemed"):
             txt = "This script is free or you are whitelisted — no key needed." if res.get("free") else "You have not redeemed a key yet."
@@ -1246,7 +1232,7 @@ class PanelView(discord.ui.View):
         reset_txt = "available now" if reset_in == 0 else f"in {reset_in // 3600}h {(reset_in % 3600) // 60}m"
         e = discord.Embed(title="Your key", color=COL_KEY,
                           description=_copy_block("KEY", res.get("key")) +
-                                      f"\\nHWID: {'bound' if res.get('hwid_bound') else 'not bound'}\\nHWID reset: {reset_txt}")
+                                      f"\nHWID: {'bound' if res.get('hwid_bound') else 'not bound'}\nHWID reset: {reset_txt}")
         e.set_footer(text=f"{BRAND} v{__version__}")
         await interaction.followup.send(embed=e, ephemeral=True)
 @deploy_group.command(name="panel", description="Post a customizable public control panel")
@@ -1288,7 +1274,7 @@ async def deploy_panel_cmd(
             view=PanelView(project_id, buyer_role.id, info))
         await ctx.respond("Custom control panel posted.", ephemeral=True)
     except Exception as e:
-        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+        await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 def main():
     if not TOKEN:
         print("Set TOKEN (or DISCORD_TOKEN) in the environment before running.", file=sys.stderr)
