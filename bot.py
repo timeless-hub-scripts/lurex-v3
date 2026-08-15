@@ -535,8 +535,9 @@ class ResultView(discord.ui.View):
 
 @bot.event
 async def on_ready():
-    await bot.change_presence(activity=discord.Activity(
-        type=discord.ActivityType.watching, name="your DMs for scripts"))
+    await bot.change_presence(activity=discord.Streaming(
+        name="Protecting Scripts For Free, 0 Execution Lag. DM me a Script File To Start!",
+        url="https://discord.gg/jzVFxhETCn"))
     print(f"{BRAND} bot online as {bot.user} (v{__version__}) backend={OBF_BACKEND}")
 
 
