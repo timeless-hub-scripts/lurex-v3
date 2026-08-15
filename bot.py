@@ -677,7 +677,7 @@ async def manage_scripts_cmd(
 async def keys_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["generate", "list", "delete"]),
-    owner_key: discord.Option(str, description="Your private OWNER- credential"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     amount: discord.Option(int, description="How many keys to generate", required=False, default=1),
     key: discord.Option(str, description="Key to delete", required=False, default=None),
     label: discord.Option(str, description="Optional label for generated keys", required=False, default=None),
@@ -688,7 +688,7 @@ async def keys_cmd(
         return
     try:
         if action == "generate":
-            res = await _api_manage({"action": "genkey", "owner_key": owner_key,
+            res = await _api_manage({"action": "genkey", "script_id": script_id,
                                      "count": max(1, min(amount, 100)), "label": label})
             keys = res.get("keys", [])
             e = discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY,
@@ -696,7 +696,7 @@ async def keys_cmd(
             e.set_footer(text=f"{BRAND} v{__version__}")
             await ctx.respond(embed=e, ephemeral=True)
         elif action == "list":
-            res = await _api_manage({"action": "listkeys", "owner_key": owner_key})
+            res = await _api_manage({"action": "listkeys", "script_id": script_id})
             ks = res.get("keys", [])
             if not ks:
                 await ctx.respond("No keys yet — generate some with `/gkey`.", ephemeral=True)
@@ -710,7 +710,7 @@ async def keys_cmd(
             if not key:
                 await ctx.respond(embed=_err_embed("Provide the `key` to delete."), ephemeral=True)
                 return
-            res = await _api_manage({"action": "delkey", "owner_key": owner_key, "key": key})
+            res = await _api_manage({"action": "delkey", "script_id": script_id, "key": key})
             await ctx.respond("Key deleted."if res.get("deleted") else "Key not found.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
@@ -720,7 +720,7 @@ async def keys_cmd(
 async def access_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["whitelist", "blacklist", "clear", "list"]),
-    owner_key: discord.Option(str, description="Your private OWNER- credential"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     user: discord.Option(discord.User, description="Target user", required=False, default=None),
 ):
     await ctx.defer(ephemeral=True)
@@ -729,7 +729,7 @@ async def access_cmd(
         return
     try:
         if action == "list":
-            res = await _api_manage({"action": "listacl", "owner_key": owner_key})
+            res = await _api_manage({"action": "listacl", "script_id": script_id})
             acl = res.get("acl", [])
             if not acl:
                 await ctx.respond("No whitelist/blacklist entries.", ephemeral=True)
@@ -742,9 +742,9 @@ async def access_cmd(
             await ctx.respond(embed=_err_embed("Pick a `user`."), ephemeral=True)
             return
         act = "unlist"if action == "clear"else action
-        await _api_manage({"action": act, "owner_key": owner_key, "discord_id": str(user.id)})
+        await _api_manage({"action": act, "script_id": script_id, "discord_id": str(user.id)})
         if action == "whitelist":
-            info = await _api_manage({"action": "info", "owner_key": owner_key})
+            info = await _api_manage({"action": "info", "script_id": script_id})
             manage_link = getattr(ctx.channel, "jump_url", None) or "this channel"
             await ctx.respond(
                 f"<@{user.id}> **YOU HAVE BEEN WHITELISTED FOR THE PROJECT:** `{info.get('name') or 'LUREX script'}`\n"
@@ -760,14 +760,14 @@ async def access_cmd(
 @script_group.command(name="info", description="Show hosted script information and its loader")
 async def script_info_cmd(
     ctx,
-    owner_key: discord.Option(str, description="Your private OWNER- credential"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
 ):
     await ctx.defer(ephemeral=True)
     if not _use_api():
         await ctx.respond(embed=_err_embed("Script info needs the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
         return
     try:
-        res = await _api_manage({"action": "info", "owner_key": owner_key})
+        res = await _api_manage({"action": "info", "script_id": script_id})
         e = discord.Embed(title="Script info", color=COL_IDLE,
                           description=f"**{res.get('name') or 'script'}**\\n```lua\\n{res.get('loadstring') or 'No loader available'}\\n```")
         e.add_field(name="Project ID", value=f"`{res.get('project_id') or 'n/a'}`", inline=False)
@@ -796,12 +796,12 @@ async def delete_script_cmd(
 @bot.slash_command(name="delkey", description="Delete one access key from a script", guild_ids=GUILD_IDS)
 async def delkey_cmd(
     ctx,
-    owner_key: discord.Option(str, description="Your private OWNER- credential"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     key: discord.Option(str, description="The access key to delete"),
 ):
     await ctx.defer(ephemeral=True)
     try:
-        res = await _api_manage({"action": "delkey", "owner_key": owner_key, "key": key})
+        res = await _api_manage({"action": "delkey", "script_id": script_id, "key": key})
         await ctx.respond("Key deleted." if res.get("deleted") else "Key not found.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
@@ -810,12 +810,12 @@ async def delkey_cmd(
 @bot.slash_command(name="blacklist", description="Blacklist a Discord user for a script", guild_ids=GUILD_IDS)
 async def blacklist_cmd(
     ctx,
-    owner_key: discord.Option(str, description="Your private OWNER- credential"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     user: discord.Option(discord.User, description="Target user"),
 ):
     await ctx.defer(ephemeral=True)
     try:
-        await _api_manage({"action": "blacklist", "owner_key": owner_key, "discord_id": str(user.id)})
+        await _api_manage({"action": "blacklist", "script_id": script_id, "discord_id": str(user.id)})
         await ctx.respond(f"<@{user.id}> was blacklisted.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
@@ -941,6 +941,7 @@ async def _show_script_picker(ctx, callback):
 @bot.slash_command(name="setadmin", description="Give a member or role owner-style script management access", guild_ids=GUILD_IDS)
 async def setadmin_cmd(
     ctx,
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     member: discord.Option(discord.Member, description="Member to authorize", required=False, default=None),
     role: discord.Option(discord.Role, description="Role to authorize", required=False, default=None),
     enabled: discord.Option(bool, description="Enable or remove access", required=False, default=True),
@@ -951,17 +952,17 @@ async def setadmin_cmd(
         return
     subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
     try:
-        async def apply(interaction, script_id):
-            await _api_manage({"action": "setadmin", "script_id": script_id, "actor_id": str(ctx.author.id), "subject_type": subject_type, "subject_id": subject_id, "enabled": enabled})
-            state = "enabled" if enabled else "removed"
-            await interaction.followup.send(f"Owner-style management access **{state}** for {label} on `{script_id}`.", ephemeral=True)
-        await _show_script_picker(ctx, apply)
+        await _api_manage({"action": "setadmin", "owner_key": owner_key, "subject_type": subject_type,
+                           "subject_id": subject_id, "enabled": enabled})
+        state = "enabled" if enabled else "removed"
+        await ctx.respond(f"Owner-style management access **{state}** for {label}.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
 
 @bot.slash_command(name="setwl", description="Set who may manage whitelist, blacklist, and keys", guild_ids=GUILD_IDS)
 async def setwl_cmd(
     ctx,
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     scope: discord.Option(str, description="Permission scope", choices=["all", "whitelist", "blacklist", "generate", "bulkgen"]),
     member: discord.Option(discord.Member, description="Member to authorize", required=False, default=None),
     role: discord.Option(discord.Role, description="Role to authorize", required=False, default=None),
@@ -973,17 +974,17 @@ async def setwl_cmd(
         return
     subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
     try:
-        async def apply(interaction, script_id):
-            await _api_manage({"action": "setwl", "script_id": script_id, "actor_id": str(ctx.author.id), "subject_type": subject_type, "subject_id": subject_id, "scope": scope, "enabled": enabled})
-            state = "enabled" if enabled else "removed"
-            await interaction.followup.send(f"`{scope}` permission **{state}** for {label} on `{script_id}`.", ephemeral=True)
-        await _show_script_picker(ctx, apply)
+        await _api_manage({"action": "setwl", "owner_key": owner_key, "subject_type": subject_type,
+                           "subject_id": subject_id, "scope": scope, "enabled": enabled})
+        state = "enabled" if enabled else "removed"
+        await ctx.respond(f"`{scope}` permission **{state}** for {label}.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
 
 @bot.slash_command(name="rmwl", description="Revoke a member or role's whitelist-management permissions", guild_ids=GUILD_IDS)
 async def rmwl_cmd(
     ctx,
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     scope: discord.Option(str, description="Permission scope to revoke", choices=["all", "whitelist", "blacklist", "generate", "bulkgen"]),
     member: discord.Option(discord.Member, description="Member to revoke", required=False, default=None),
     role: discord.Option(discord.Role, description="Role to revoke", required=False, default=None),
@@ -993,11 +994,12 @@ async def rmwl_cmd(
         await ctx.respond(embed=_err_embed("Choose exactly one `member` or `role`."), ephemeral=True)
         return
     subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
-    async def apply(interaction, script_id):
-        await _api_manage({"action": "rmwl", "script_id": script_id, "actor_id": str(ctx.author.id),
-                           "subject_type": subject_type, "subject_id": subject_id, "scope": scope})
-        await interaction.followup.send(f"WL permission `{scope}` was revoked for {label} on `{script_id}`.", ephemeral=True)
-    await _show_script_picker(ctx, apply)
+    try:
+        await _api_manage({"action": "rmwl", "owner_key": owner_key, "subject_type": subject_type,
+                           "subject_id": subject_id, "scope": scope})
+        await ctx.respond(f"WL permission `{scope}` was revoked for {label}.", ephemeral=True)
+    except Exception as e:
+        await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
 
 @edit_group.command(name="panel", description="Edit the saved panel look for one of your scripts")
 async def edit_panel_cmd(
@@ -1064,13 +1066,13 @@ async def admin_cmd(
 @bot.slash_command(name="kmassgen", description="Generate up to 100 access keys at once", guild_ids=GUILD_IDS)
 async def kmassgen_cmd(
     ctx,
-    owner_key: discord.Option(str, description="Your private OWNER- credential"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     amount: discord.Option(int, description="Number of keys", required=False, default=10),
     label: discord.Option(str, description="Optional label", required=False, default=None),
 ):
     await ctx.defer(ephemeral=True)
     try:
-        res = await _api_manage({"action": "genkey", "owner_key": owner_key, "count": max(1, min(amount, 100)), "label": label})
+        res = await _api_manage({"action": "genkey", "script_id": script_id, "count": max(1, min(amount, 100)), "label": label})
         keys = res.get("keys", [])
         e = discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="```\\n" + "\\n".join(keys) + "\\n```")
         e.set_footer(text=f"{BRAND} v{__version__}")
@@ -1082,7 +1084,7 @@ async def kmassgen_cmd(
 @bot.slash_command(name="whitelist-role", description="Whitelist every member of a Discord role", guild_ids=GUILD_IDS)
 async def whitelist_role_cmd(
     ctx,
-    owner_key: discord.Option(str, description="Your private OWNER- credential"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     role: discord.Option(discord.Role, description="Role whose members should be whitelisted"),
 ):
     await ctx.defer(ephemeral=True)
@@ -1092,7 +1094,7 @@ async def whitelist_role_cmd(
         return
     try:
         for member in members[:100]:
-            await _api_manage({"action": "whitelist", "owner_key": owner_key, "discord_id": str(member.id)})
+            await _api_manage({"action": "whitelist", "script_id": script_id, "discord_id": str(member.id)})
         await ctx.respond(f"Whitelisted {min(len(members), 100)} member(s) from {role.mention}.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
