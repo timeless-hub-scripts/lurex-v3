@@ -977,7 +977,7 @@ class PanelView(discord.ui.View):
 @deploy_group.command(name="panel", description="Post a customizable public control panel")
 async def deploy_panel_cmd(
     ctx,
-    project_id: discord.Option(str, description="The public project ID of the script"),
+    project_id: discord.Option(str, description="The PROJECT- ID shown after script creation"),
     buyer_role: discord.Option(discord.Role, description="Role to grant verified buyers"),
     title: discord.Option(str, description="Panel title", required=False, default=None),
     description: discord.Option(str, description="Panel description", required=False, default=None),
@@ -995,7 +995,7 @@ async def deploy_panel_cmd(
         await ctx.respond(embed=_err_embed("Panels need the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
         return
     try:
-        await _api_manage({"action": "set_panel", "script_id": project_id,
+        await _api_manage({"action": "set_panel", "project": project_id,
                             "title": title, "desc": description, "color": embed_color,
                             "hwid_resets": hwid_resets, "show_redeem": show_redeem,
                             "show_get_script": show_get_script, "show_hwid": show_hwid,
