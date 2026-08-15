@@ -1264,17 +1264,22 @@ async def deploy_panel_cmd(
         await ctx.respond(embed=_err_embed("Panels need the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
         return
     try:
-        await _api_manage({"action": "set_panel", "project": script_id,
+        actor_id = str(ctx.author.id)
+        info = await _api_manage({"action": "info", "script_id": script_id, "actor_id": actor_id})
+        project_id = info.get("project_id")
+        if not project_id:
+            raise RuntimeError("The selected script has no PROJECT- reference.")
+        await _api_manage({"action": "set_panel", "script_id": script_id, "actor_id": actor_id,
                             "title": title, "desc": description, "color": embed_color,
                             "hwid_resets": hwid_resets, "show_redeem": show_redeem,
                             "show_get_script": show_get_script, "show_hwid": show_hwid,
                             "show_buyer": show_buyer, "show_key_info": show_key_info,
                             "emojis": emojis})
-        info = await _api_manage({"action": "panel_info", "project": script_id})
+        info = await _api_manage({"action": "panel_info", "project": project_id})
         await ctx.channel.send(
             embed=_panel_embed(info.get("name") or "script", info.get("panel_title"),
                                info.get("panel_desc"), info.get("panel_color"), info),
-            view=PanelView(script_id, buyer_role.id, info))
+            view=PanelView(project_id, buyer_role.id, info))
         await ctx.respond("Custom control panel posted.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
