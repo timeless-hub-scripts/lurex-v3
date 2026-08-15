@@ -117,12 +117,12 @@ def _proc_embed(spin, stage, pct):
     return e
 
 
-def _ok_embed(name, script_name, in_bytes, out_bytes, secs, silent, fast):
+def _ok_embed(name, script_name, in_bytes, out_bytes, secs, silent, full_protect):
     ratio = (out_bytes / in_bytes) if in_bytes else 0
     flags = []
     flags.append("silent"if silent else "prints")
-    if fast:
-        flags.append("fast")
+    if full_protect:
+        flags.append("FULL PROTECT")
     e = discord.Embed(title="Obfuscation complete", color=COL_OK,
                       description=f"**{script_name}** is protected and hosted.")
     e.add_field(name="Source", value=f"`{name}`\n{_human(in_bytes)}", inline=True)
@@ -136,7 +136,7 @@ def _copy_block(label, value):
     value = str(value or "")
     mobile = value.replace("\n", ";")
     return (f"**{label} — PC COPY**\n```\n{value}\n```\n"
-            f"**{label} — MOBILE COPY**\n```\n{mobile}\n```")
+            f"**{label} — MOBILE COPY**\n`{mobile}`")
 
 def _loader_lines(desktop):
     return _copy_block("LOADSTRING", desktop)
@@ -176,17 +176,16 @@ def _err_embed(msg):
     return e
 
 
-def _config_embed(name, silent, fast, free):
+def _config_embed(name, silent, full_protect, free):
     lines = [
         f"**Source:** `{name}`",
         "",
         f"{'**Silent Mode** — on (no prints)'if silent else '**Silent Mode** — off (prints a load banner)'}",
-        f"{'**Fast Mode** — on'if fast else '**Fast Mode** — off (full protection)'}",
+        f"{'**FULL PROTECT** — on'if full_protect else '**FULL PROTECT** — off (lighter protection)'}",
         f"{'**Access** — free (no key required)'if free else '**Access** — key required (HWID-locked)'}",
     ]
-    if fast:
-        lines += ["", "**Fast Mode drops security checks** for a quicker load. "
-                  "Your script is easier to analyze — only use it if load time matters."]
+    if full_protect:
+        lines += ["", "**FULL PROTECT is enabled** — all available protection checks are applied."]
     if not free:
         lines += ["", "With a key required, generate keys with **`/gkey`** and give buyers a "
                   "**`/deploy`** to redeem them. Each key is HWID-locked on first run."]
@@ -203,7 +202,7 @@ def _help_embed():
         description=(
             "**DM me a `.lua` / `.luau` file** and I'll protect it, host it, and hand you a"
             "ready-to-run **loadstring**.\n\n"
-            "• Pick a **name**, then toggle **Silent** / **Fast** mode.\n"
+            "• Pick a **name**, then toggle **Silent** / **FULL PROTECT** mode.\n"
             "• You get a private **script key** to update, freeze, or delete your script"
             "with `/manage` — the loadstring never changes.\n"
             "• Use **`/apply`** in a server for the same flow (ephemeral)."
@@ -223,7 +222,7 @@ class Session:
         self.default_name = os.path.splitext(filename)[0][:64] or "script"
         self.name = self.default_name
         self.silent = False
-        self.fast = False
+        self.full_protect = True
         self.free = False
 
 
@@ -299,7 +298,7 @@ async def _animate(responder, state):
 
 async def _do(responder, session):
     opts = {"target": "executor", "name": session.name,
-            "silent": session.silent, "fast": session.fast, "free": session.free}
+            "silent": session.silent, "fast": not session.full_protect, "free": session.free}
     state = {"stage": "Reading source", "pct": 2.0, "target": 22.0, "done": False}
     anim = asyncio.create_task(_animate(responder, state))
     start = time.time()
@@ -330,7 +329,7 @@ async def _do(responder, session):
     file = discord.File(io.BytesIO(payload), filename=out_name)
 
     ok_embed = _ok_embed(session.filename, session.name, len(session.data),
-                         len(payload), elapsed, session.silent, session.fast)
+                         len(payload), elapsed, session.silent, session.full_protect)
 
     loadstring = result.get("loadstring")
     script_id = result.get("script_id")
@@ -393,7 +392,7 @@ class ConfigView(discord.ui.View):
     async def _refresh(self, interaction):
         await interaction.response.edit_message(
             embed=_config_embed(self.session.filename, self.session.silent,
-                                self.session.fast, self.session.free),
+                                self.session.full_protect, self.session.free),
             view=self)
 
     @discord.ui.button(label="Silent Mode", style=discord.ButtonStyle.secondary)
@@ -402,10 +401,10 @@ class ConfigView(discord.ui.View):
         self.session.silent = not self.session.silent
         await self._refresh(interaction)
 
-    @discord.ui.button(label="Fast Mode", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="FULL PROTECT", style=discord.ButtonStyle.secondary)
     async def toggle_fast(self, a, b):
         interaction = _interaction(a, b)
-        self.session.fast = not self.session.fast
+        self.session.full_protect = not self.session.full_protect
         await self._refresh(interaction)
 
     @discord.ui.button(label="Free / Key", style=discord.ButtonStyle.secondary)
@@ -474,7 +473,7 @@ async def on_ready():
 
 async def _begin(author, origin, filename, data, channel=None, ctx=None):
     session = Session(author.id, origin, filename, data, channel)
-    embed = _config_embed(filename, session.silent, session.fast, session.free)
+    embed = _config_embed(filename, session.silent, session.full_protect, session.free)
     view = ConfigView(session)
     if origin == "slash":
         await ctx.respond(embed=embed, view=view, ephemeral=True)
