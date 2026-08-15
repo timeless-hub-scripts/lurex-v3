@@ -853,8 +853,27 @@ async def setup_guide_cmd(ctx):
     await ctx.respond(embed=e, ephemeral=True)
 
 
-owner_group = bot.create_group("owner", "Restricted LUREX owner tools")
+async def _owner_discord_labels(user_id, server_id):
+    user_label = "unknown user"
+    server_label = "DM or unknown server"
+    try:
+        if user_id:
+            user = await bot.fetch_user(int(user_id))
+            user_label = user.global_name or user.name
+    except Exception:
+        pass
+    try:
+        if server_id:
+            guild = bot.get_guild(int(server_id))
+            if guild is None:
+                guild = await bot.fetch_guild(int(server_id))
+            if guild is not None:
+                server_label = guild.name
+    except Exception:
+        pass
+    return discord.utils.escape_markdown(str(user_label)), discord.utils.escape_markdown(str(server_label))
 
+owner_group = bot.create_group("owner", "Restricted LUREX owner tools")
 @owner_group.command(name="view", description="View the restricted LUREX owner audit")
 async def owner_view_cmd(ctx):
     await ctx.defer(ephemeral=True)
@@ -870,7 +889,11 @@ async def owner_view_cmd(ctx):
             owner_text = str(item.get("owner") or "unknown")
             try:
                 owner_meta = json.loads(owner_text)
-                owner_text = f"user `{owner_meta.get('user_id') or 'unknown'}` · server `{owner_meta.get('server_id') or 'DM'}`"
+                user_id = str(owner_meta.get("user_id") or "")
+                server_id = str(owner_meta.get("server_id") or "")
+                user_label, server_label = await _owner_discord_labels(user_id, server_id)
+                owner_text = (f"user **{user_label}** (`{user_id or 'unknown'}`) · "
+                              f"server **{server_label}** (`{server_id or 'DM'}`)")
             except Exception:
                 owner_text = f"owner `{owner_text}`"
             lines.append(f"`{item.get('sid') or 'n/a'}` — **{item.get('name') or 'unnamed'}** — {owner_text}")
