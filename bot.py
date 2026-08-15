@@ -157,9 +157,11 @@ def _loader_embed(script_name, loadstring, ephemeral_storage):
     return e
 
 
-def _key_embed(script_id, project_id=None, free=False):
-    desc = [f"**Private owner key** (shown once — save it):", _copy_block("OWNER KEY", script_id),
-            "Manage with **`/manage`**, **`/gkey`**, **`/whitelist`** — anyone with this key controls the script."]
+def _key_embed(owner_key, project_id=None, free=False, script_id=None):
+    desc = ["**Owner credential** (shown once — save it):", _copy_block("OWNER KEY", owner_key),
+            "Use the owner credential for information, management, and permission commands."]
+    if script_id:
+        desc += ["", "**Script ID** (for script update and panel actions):", _copy_block("SCRIPT ID", script_id)]
     if project_id:
         desc += ["", f"**Project ID** (public — for `/deploy`):", f"`{project_id}`"]
         if not free:
@@ -340,7 +342,7 @@ async def _do(responder, session):
     if loadstring:
         loader_embed = _loader_embed(session.name, loadstring, result.get("ephemeral_storage", False))
         view = ResultView(session.author_id, script_id, session.name) if script_id else None
-        key_embed = _key_embed(script_id, result.get("project_id"), session.free) if script_id else None
+        key_embed = _key_embed(result.get("owner_key") or script_id, result.get("project_id"), session.free, script_id) if script_id and not session.free else None
     else:
         loader_embed = discord.Embed(
             title="Protected file ready", color=COL_OK,
@@ -365,7 +367,7 @@ async def _launch_build(session, interaction):
 
 class NameModal(discord.ui.Modal):
     def __init__(self, session):
-        super().__init__(title="Name your script")
+        super().__init__(title="Add script name")
         self.session = session
         self.name_input = discord.ui.InputText(
             label="Script name",
@@ -379,12 +381,84 @@ class NameModal(discord.ui.Modal):
     async def callback(self, interaction):
         value = (self.name_input.value or "").strip()
         self.session.name = value[:64] or "script"
-        await _launch_build(self.session, interaction)
+        await interaction.response.edit_message(
+            embed=_mode_embed(self.session), view=ModeView(self.session))
 
 
-class ConfigView(discord.ui.View):
+def _name_embed(session):
+    e = discord.Embed(title="Name your script", color=COL_PROC,
+                      description=(f"File: `{session.filename}`\n\n"
+                                   "Press **ADD NAME** to choose the script name.\n"
+                                   "The name is used in your script selector and panel."))
+    e.set_footer(text=f"{BRAND} v{__version__}")
+    return e
+
+
+def _mode_embed(session):
+    e = discord.Embed(title=f"{session.name} · choose access mode", color=COL_PROC,
+                      description=("Choose how this script will be delivered.\n\n"
+                                   "**FREE MODE 🆓** — anyone can use the loader.\n"
+                                   "**PAID MODE 🔐** — buyers use LUREX keys through a panel."))
+    e.set_footer(text=f"{BRAND} v{__version__}")
+    return e
+
+
+def _protection_embed(session):
+    state = "FULL PROTECT" if session.full_protect else "SILENT MODE"
+    e = discord.Embed(title=f"{session.name} · protection", color=COL_PROC,
+                      description=(f"Access: **{'FREE MODE 🆓' if session.free else 'PAID MODE 🔐'}**\n"
+                                   f"Selected: **{state}**\n\n"
+                                   "Choose one protection mode, then press **NEXT**."))
+    e.set_footer(text=f"{BRAND} v{__version__}")
+    return e
+
+
+class CreateNameView(discord.ui.View):
     def __init__(self, session):
-        super().__init__(timeout=300)
+        super().__init__(timeout=600)
+        self.session = session
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.session.author_id:
+            await interaction.response.send_message("This isn't your session.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="ADD NAME", style=discord.ButtonStyle.primary)
+    async def add_name(self, a, b):
+        interaction = _interaction(a, b)
+        await interaction.response.send_modal(NameModal(self.session))
+
+
+class ModeView(discord.ui.View):
+    def __init__(self, session):
+        super().__init__(timeout=600)
+        self.session = session
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.session.author_id:
+            await interaction.response.send_message("This isn't your session.", ephemeral=True)
+            return False
+        return True
+
+    async def _choose(self, interaction, free):
+        self.session.free = free
+        await interaction.response.edit_message(embed=_protection_embed(self.session),
+                                                 view=ProtectionView(self.session))
+        self.stop()
+
+    @discord.ui.button(label="FREE MODE 🆓", style=discord.ButtonStyle.success)
+    async def free_mode(self, a, b):
+        await self._choose(_interaction(a, b), True)
+
+    @discord.ui.button(label="PAID MODE 🔐", style=discord.ButtonStyle.primary)
+    async def paid_mode(self, a, b):
+        await self._choose(_interaction(a, b), False)
+
+
+class ProtectionView(discord.ui.View):
+    def __init__(self, session):
+        super().__init__(timeout=600)
         self.session = session
 
     async def interaction_check(self, interaction):
@@ -394,34 +468,25 @@ class ConfigView(discord.ui.View):
         return True
 
     async def _refresh(self, interaction):
-        await interaction.response.edit_message(
-            embed=_config_embed(self.session.filename, self.session.silent,
-                                self.session.full_protect, self.session.free),
-            view=self)
+        await interaction.response.edit_message(embed=_protection_embed(self.session), view=self)
 
-    @discord.ui.button(label="Silent Mode", style=discord.ButtonStyle.secondary)
-    async def toggle_silent(self, a, b):
-        interaction = _interaction(a, b)
-        self.session.silent = not self.session.silent
-        await self._refresh(interaction)
+    @discord.ui.button(label="FULL PROTECT", style=discord.ButtonStyle.primary)
+    async def full_protect(self, a, b):
+        self.session.full_protect = True
+        self.session.silent = False
+        await self._refresh(_interaction(a, b))
 
-    @discord.ui.button(label="FULL PROTECT", style=discord.ButtonStyle.secondary)
-    async def toggle_fast(self, a, b):
-        interaction = _interaction(a, b)
-        self.session.full_protect = not self.session.full_protect
-        await self._refresh(interaction)
+    @discord.ui.button(label="SILENT MODE", style=discord.ButtonStyle.secondary)
+    async def silent_mode(self, a, b):
+        self.session.full_protect = False
+        self.session.silent = True
+        await self._refresh(_interaction(a, b))
 
-    @discord.ui.button(label="Free / Key", style=discord.ButtonStyle.secondary)
-    async def toggle_free(self, a, b):
+    @discord.ui.button(label="NEXT", style=discord.ButtonStyle.success)
+    async def next_step(self, a, b):
         interaction = _interaction(a, b)
-        self.session.free = not self.session.free
-        await self._refresh(interaction)
-
-    @discord.ui.button(label="Name & obfuscate", style=discord.ButtonStyle.success)
-    async def go(self, a, b):
-        interaction = _interaction(a, b)
-        await interaction.response.send_modal(NameModal(self.session))
         self.stop()
+        await _launch_build(self.session, interaction)
 
 
 class ResultView(discord.ui.View):
@@ -478,8 +543,8 @@ async def on_ready():
 async def _begin(author, origin, filename, data, channel=None, ctx=None):
     session = Session(author.id, origin, filename, data, channel)
     session.server_id = str(getattr(ctx, "guild_id", "") or "") if ctx is not None else ""
-    embed = _config_embed(filename, session.silent, session.full_protect, session.free)
-    view = ConfigView(session)
+    embed = _name_embed(session)
+    view = CreateNameView(session)
     if origin == "slash":
         await ctx.respond(embed=embed, view=view, ephemeral=True)
     else:
@@ -517,6 +582,7 @@ delete_group = bot.create_group("delete", "Delete LUREX resources")
 script_group = bot.create_group("script", "Inspect LUREX scripts")
 server_group = bot.create_group("server", "LUREX server utilities")
 setup_group = bot.create_group("setup", "LUREX setup utilities")
+edit_group = bot.create_group("edit", "Edit LUREX resources")
 
 
 @create_group.command(name="script", description="Protect and host a Lua/Luau script")
@@ -548,7 +614,7 @@ async def apply_script_cmd(ctx, file: discord.Option(discord.Attachment, descrip
 async def manage_scripts_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["info", "update", "freeze", "unfreeze", "free", "paid", "delete"]),
-    script_id: discord.Option(str, description="Your private script key"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     file: discord.Option(discord.Attachment, description="New script (for update)", required=False, default=None),
     name: discord.Option(str, description="New name (for update)", required=False, default=None),
     silent: discord.Option(bool, description="Silent mode (for update)", required=False, default=False),
@@ -611,7 +677,7 @@ async def manage_scripts_cmd(
 async def keys_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["generate", "list", "delete"]),
-    script_id: discord.Option(str, description="Your private owner key"),
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     amount: discord.Option(int, description="How many keys to generate", required=False, default=1),
     key: discord.Option(str, description="Key to delete", required=False, default=None),
     label: discord.Option(str, description="Optional label for generated keys", required=False, default=None),
@@ -622,7 +688,7 @@ async def keys_cmd(
         return
     try:
         if action == "generate":
-            res = await _api_manage({"action": "genkey", "script_id": script_id,
+            res = await _api_manage({"action": "genkey", "owner_key": owner_key,
                                      "count": max(1, min(amount, 100)), "label": label})
             keys = res.get("keys", [])
             e = discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY,
@@ -630,7 +696,7 @@ async def keys_cmd(
             e.set_footer(text=f"{BRAND} v{__version__}")
             await ctx.respond(embed=e, ephemeral=True)
         elif action == "list":
-            res = await _api_manage({"action": "listkeys", "script_id": script_id})
+            res = await _api_manage({"action": "listkeys", "owner_key": owner_key})
             ks = res.get("keys", [])
             if not ks:
                 await ctx.respond("No keys yet — generate some with `/gkey`.", ephemeral=True)
@@ -644,7 +710,7 @@ async def keys_cmd(
             if not key:
                 await ctx.respond(embed=_err_embed("Provide the `key` to delete."), ephemeral=True)
                 return
-            res = await _api_manage({"action": "delkey", "script_id": script_id, "key": key})
+            res = await _api_manage({"action": "delkey", "owner_key": owner_key, "key": key})
             await ctx.respond("Key deleted."if res.get("deleted") else "Key not found.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
@@ -654,7 +720,7 @@ async def keys_cmd(
 async def access_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["whitelist", "blacklist", "clear", "list"]),
-    script_id: discord.Option(str, description="Your private owner key"),
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     user: discord.Option(discord.User, description="Target user", required=False, default=None),
 ):
     await ctx.defer(ephemeral=True)
@@ -663,7 +729,7 @@ async def access_cmd(
         return
     try:
         if action == "list":
-            res = await _api_manage({"action": "listacl", "script_id": script_id})
+            res = await _api_manage({"action": "listacl", "owner_key": owner_key})
             acl = res.get("acl", [])
             if not acl:
                 await ctx.respond("No whitelist/blacklist entries.", ephemeral=True)
@@ -676,9 +742,9 @@ async def access_cmd(
             await ctx.respond(embed=_err_embed("Pick a `user`."), ephemeral=True)
             return
         act = "unlist"if action == "clear"else action
-        await _api_manage({"action": act, "script_id": script_id, "discord_id": str(user.id)})
+        await _api_manage({"action": act, "owner_key": owner_key, "discord_id": str(user.id)})
         if action == "whitelist":
-            info = await _api_manage({"action": "info", "script_id": script_id})
+            info = await _api_manage({"action": "info", "owner_key": owner_key})
             manage_link = getattr(ctx.channel, "jump_url", None) or "this channel"
             await ctx.respond(
                 f"<@{user.id}> **YOU HAVE BEEN WHITELISTED FOR THE PROJECT:** `{info.get('name') or 'LUREX script'}`\n"
@@ -694,14 +760,14 @@ async def access_cmd(
 @script_group.command(name="info", description="Show hosted script information and its loader")
 async def script_info_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private owner key"),
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
 ):
     await ctx.defer(ephemeral=True)
     if not _use_api():
         await ctx.respond(embed=_err_embed("Script info needs the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
         return
     try:
-        res = await _api_manage({"action": "info", "script_id": script_id})
+        res = await _api_manage({"action": "info", "owner_key": owner_key})
         e = discord.Embed(title="Script info", color=COL_IDLE,
                           description=f"**{res.get('name') or 'script'}**\\n```lua\\n{res.get('loadstring') or 'No loader available'}\\n```")
         e.add_field(name="Project ID", value=f"`{res.get('project_id') or 'n/a'}`", inline=False)
@@ -717,7 +783,7 @@ async def script_info_cmd(
 @delete_group.command(name="script", description="Delete a hosted script")
 async def delete_script_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private owner key"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
 ):
     await ctx.defer(ephemeral=True)
     try:
@@ -730,12 +796,12 @@ async def delete_script_cmd(
 @bot.slash_command(name="delkey", description="Delete one access key from a script", guild_ids=GUILD_IDS)
 async def delkey_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private owner key"),
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     key: discord.Option(str, description="The access key to delete"),
 ):
     await ctx.defer(ephemeral=True)
     try:
-        res = await _api_manage({"action": "delkey", "script_id": script_id, "key": key})
+        res = await _api_manage({"action": "delkey", "owner_key": owner_key, "key": key})
         await ctx.respond("Key deleted." if res.get("deleted") else "Key not found.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
@@ -744,12 +810,12 @@ async def delkey_cmd(
 @bot.slash_command(name="blacklist", description="Blacklist a Discord user for a script", guild_ids=GUILD_IDS)
 async def blacklist_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private owner key"),
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     user: discord.Option(discord.User, description="Target user"),
 ):
     await ctx.defer(ephemeral=True)
     try:
-        await _api_manage({"action": "blacklist", "script_id": script_id, "discord_id": str(user.id)})
+        await _api_manage({"action": "blacklist", "owner_key": owner_key, "discord_id": str(user.id)})
         await ctx.respond(f"<@{user.id}> was blacklisted.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
@@ -827,10 +893,54 @@ async def owner_view_cmd(ctx):
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
 
+class ScriptSelectView(discord.ui.View):
+    def __init__(self, author_id, scripts, callback):
+        super().__init__(timeout=180)
+        self.author_id = author_id
+        self.callback_fn = callback
+        options = []
+        for item in scripts[:25]:
+            sid = str(item.get("sid") or "")
+            name = str(item.get("name") or "script")
+            if sid:
+                options.append(discord.SelectOption(label=sid[:100], value=sid[:100], description=f"SCRIPT: {name}"[:100]))
+        if not options:
+            options = [discord.SelectOption(label="No scripts found", value="none", description="Create a script first")]
+        picker = discord.ui.Select(placeholder="Choose a script", options=options)
+        picker.callback = self._selected
+        self.add_item(picker)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("This script selector belongs to its creator.", ephemeral=True)
+            return False
+        return True
+
+    async def _selected(self, interaction):
+        selected = interaction.data.get("values", [""])[0]
+        if selected == "none":
+            await interaction.response.send_message("No scripts found. Use `/create script` first.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await self.callback_fn(interaction, selected)
+        except Exception as exc:
+            await interaction.followup.send(embed=_err_embed(f"```\\n{str(exc)[:400]}\\n```"), ephemeral=True)
+        self.stop()
+
+async def _show_script_picker(ctx, callback):
+    res = await _api_manage({"action": "list_mine", "actor_id": str(ctx.author.id)})
+    scripts = res.get("scripts", [])
+    if not scripts:
+        await ctx.respond(embed=_err_embed("No scripts found for your Discord account. Create one with `/create script` first."), ephemeral=True)
+        return
+    await ctx.respond(embed=discord.Embed(title="Select a LUREX script", color=COL_PROC,
+                                           description="Choose the `SCRIPT_ID-...` entry you want to manage."),
+                       view=ScriptSelectView(ctx.author.id, scripts, callback), ephemeral=True)
+
 @bot.slash_command(name="setadmin", description="Give a member or role owner-style script management access", guild_ids=GUILD_IDS)
 async def setadmin_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private OWNER- key"),
     member: discord.Option(discord.Member, description="Member to authorize", required=False, default=None),
     role: discord.Option(discord.Role, description="Role to authorize", required=False, default=None),
     enabled: discord.Option(bool, description="Enable or remove access", required=False, default=True),
@@ -841,16 +951,17 @@ async def setadmin_cmd(
         return
     subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
     try:
-        res = await _api_manage({"action": "setadmin", "script_id": script_id, "subject_type": subject_type, "subject_id": subject_id, "enabled": enabled})
-        state = "enabled" if enabled else "removed"
-        await ctx.respond(f"Owner-style management access **{state}** for {label}.", ephemeral=True)
+        async def apply(interaction, script_id):
+            await _api_manage({"action": "setadmin", "script_id": script_id, "actor_id": str(ctx.author.id), "subject_type": subject_type, "subject_id": subject_id, "enabled": enabled})
+            state = "enabled" if enabled else "removed"
+            await interaction.followup.send(f"Owner-style management access **{state}** for {label} on `{script_id}`.", ephemeral=True)
+        await _show_script_picker(ctx, apply)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
 
 @bot.slash_command(name="setwl", description="Set who may manage whitelist, blacklist, and keys", guild_ids=GUILD_IDS)
 async def setwl_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private OWNER- key"),
     scope: discord.Option(str, description="Permission scope", choices=["all", "whitelist", "blacklist", "generate", "bulkgen"]),
     member: discord.Option(discord.Member, description="Member to authorize", required=False, default=None),
     role: discord.Option(discord.Role, description="Role to authorize", required=False, default=None),
@@ -862,11 +973,55 @@ async def setwl_cmd(
         return
     subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
     try:
-        await _api_manage({"action": "setwl", "script_id": script_id, "subject_type": subject_type, "subject_id": subject_id, "scope": scope, "enabled": enabled})
-        state = "enabled" if enabled else "removed"
-        await ctx.respond(f"`{scope}` permission **{state}** for {label}.", ephemeral=True)
+        async def apply(interaction, script_id):
+            await _api_manage({"action": "setwl", "script_id": script_id, "actor_id": str(ctx.author.id), "subject_type": subject_type, "subject_id": subject_id, "scope": scope, "enabled": enabled})
+            state = "enabled" if enabled else "removed"
+            await interaction.followup.send(f"`{scope}` permission **{state}** for {label} on `{script_id}`.", ephemeral=True)
+        await _show_script_picker(ctx, apply)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
+
+@bot.slash_command(name="rmwl", description="Revoke a member or role's whitelist-management permissions", guild_ids=GUILD_IDS)
+async def rmwl_cmd(
+    ctx,
+    scope: discord.Option(str, description="Permission scope to revoke", choices=["all", "whitelist", "blacklist", "generate", "bulkgen"]),
+    member: discord.Option(discord.Member, description="Member to revoke", required=False, default=None),
+    role: discord.Option(discord.Role, description="Role to revoke", required=False, default=None),
+):
+    await ctx.defer(ephemeral=True)
+    if (member is None) == (role is None):
+        await ctx.respond(embed=_err_embed("Choose exactly one `member` or `role`."), ephemeral=True)
+        return
+    subject_type, subject_id, label = (("member", str(member.id), member.mention) if member else ("role", str(role.id), role.mention))
+    async def apply(interaction, script_id):
+        await _api_manage({"action": "rmwl", "script_id": script_id, "actor_id": str(ctx.author.id),
+                           "subject_type": subject_type, "subject_id": subject_id, "scope": scope})
+        await interaction.followup.send(f"WL permission `{scope}` was revoked for {label} on `{script_id}`.", ephemeral=True)
+    await _show_script_picker(ctx, apply)
+
+@edit_group.command(name="panel", description="Edit the saved panel look for one of your scripts")
+async def edit_panel_cmd(
+    ctx,
+    title: discord.Option(str, description="Panel title", required=False, default=None),
+    description: discord.Option(str, description="Panel description", required=False, default=None),
+    embed_color: discord.Option(str, description="Hex color such as #E88AA8", required=False, default=None),
+    hwid_resets: discord.Option(bool, description="Show and allow HWID resets", required=False, default=True),
+    show_redeem: discord.Option(bool, description="Show Redeem Key", required=False, default=True),
+    show_get_script: discord.Option(bool, description="Show Get Script", required=False, default=True),
+    show_hwid: discord.Option(bool, description="Show Reset HWID", required=False, default=True),
+    show_buyer: discord.Option(bool, description="Show Get Buyer Role", required=False, default=True),
+    show_key_info: discord.Option(bool, description="Show Key Info", required=False, default=True),
+    emojis: discord.Option(bool, description="Show emojis on buttons", required=False, default=False),
+):
+    await ctx.defer(ephemeral=True)
+    async def apply(interaction, script_id):
+        await _api_manage({"action": "set_panel", "script_id": script_id, "actor_id": str(ctx.author.id),
+                           "title": title, "desc": description, "color": embed_color,
+                           "hwid_resets": hwid_resets, "show_redeem": show_redeem,
+                           "show_get_script": show_get_script, "show_hwid": show_hwid,
+                           "show_buyer": show_buyer, "show_key_info": show_key_info, "emojis": emojis})
+        await interaction.followup.send(f"Panel settings saved for `{script_id}`. Use `/deploy panel` to post it.", ephemeral=True)
+    await _show_script_picker(ctx, apply)
 
 @bot.slash_command(name="admin", description="Use delegated project-management permissions", guild_ids=GUILD_IDS)
 async def admin_cmd(
@@ -909,13 +1064,13 @@ async def admin_cmd(
 @bot.slash_command(name="kmassgen", description="Generate up to 100 access keys at once", guild_ids=GUILD_IDS)
 async def kmassgen_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private owner key"),
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     amount: discord.Option(int, description="Number of keys", required=False, default=10),
     label: discord.Option(str, description="Optional label", required=False, default=None),
 ):
     await ctx.defer(ephemeral=True)
     try:
-        res = await _api_manage({"action": "genkey", "script_id": script_id, "count": max(1, min(amount, 100)), "label": label})
+        res = await _api_manage({"action": "genkey", "owner_key": owner_key, "count": max(1, min(amount, 100)), "label": label})
         keys = res.get("keys", [])
         e = discord.Embed(title=f"Generated {len(keys)} key(s)", color=COL_KEY, description="```\\n" + "\\n".join(keys) + "\\n```")
         e.set_footer(text=f"{BRAND} v{__version__}")
@@ -927,7 +1082,7 @@ async def kmassgen_cmd(
 @bot.slash_command(name="whitelist-role", description="Whitelist every member of a Discord role", guild_ids=GUILD_IDS)
 async def whitelist_role_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your private owner key"),
+    owner_key: discord.Option(str, description="Your private OWNER- credential"),
     role: discord.Option(discord.Role, description="Role whose members should be whitelisted"),
 ):
     await ctx.defer(ephemeral=True)
@@ -937,7 +1092,7 @@ async def whitelist_role_cmd(
         return
     try:
         for member in members[:100]:
-            await _api_manage({"action": "whitelist", "script_id": script_id, "discord_id": str(member.id)})
+            await _api_manage({"action": "whitelist", "owner_key": owner_key, "discord_id": str(member.id)})
         await ctx.respond(f"Whitelisted {min(len(members), 100)} member(s) from {role.mention}.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
@@ -1091,7 +1246,7 @@ class PanelView(discord.ui.View):
 @deploy_group.command(name="panel", description="Post a customizable public control panel")
 async def deploy_panel_cmd(
     ctx,
-    project_id: discord.Option(str, description="The PROJECT- ID shown after script creation"),
+    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     buyer_role: discord.Option(discord.Role, description="Role to grant verified buyers"),
     title: discord.Option(str, description="Panel title", required=False, default=None),
     description: discord.Option(str, description="Panel description", required=False, default=None),
@@ -1109,17 +1264,17 @@ async def deploy_panel_cmd(
         await ctx.respond(embed=_err_embed("Panels need the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
         return
     try:
-        await _api_manage({"action": "set_panel", "project": project_id,
+        await _api_manage({"action": "set_panel", "project": script_id,
                             "title": title, "desc": description, "color": embed_color,
                             "hwid_resets": hwid_resets, "show_redeem": show_redeem,
                             "show_get_script": show_get_script, "show_hwid": show_hwid,
                             "show_buyer": show_buyer, "show_key_info": show_key_info,
                             "emojis": emojis})
-        info = await _api_manage({"action": "panel_info", "project": project_id})
+        info = await _api_manage({"action": "panel_info", "project": script_id})
         await ctx.channel.send(
             embed=_panel_embed(info.get("name") or "script", info.get("panel_title"),
                                info.get("panel_desc"), info.get("panel_color"), info),
-            view=PanelView(project_id, buyer_role.id, info))
+            view=PanelView(script_id, buyer_role.id, info))
         await ctx.respond("Custom control panel posted.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\\n{str(e)[:400]}\\n```"), ephemeral=True)
