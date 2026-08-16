@@ -710,7 +710,7 @@ async def access_cmd(
     script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
     user: discord.Option(discord.User, description="Target user", required=False, default=None),
 ):
-    await ctx.defer(ephemeral=True)
+    await ctx.defer()
     if not _use_api():
         await ctx.respond(embed=_err_embed("Access control needs the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
         return
@@ -733,8 +733,8 @@ async def access_cmd(
         if action == "whitelist":
             info = await _api_manage({"action": "info", "script_id": script_id})
             manage_link = getattr(ctx.channel, "jump_url", None) or "this channel"
-            await ctx.respond(
-                f"<@{user.id}> **YOU HAVE BEEN WHITELISTED FOR THE PROJECT:** `{info.get('name') or 'LUREX script'}`\n"
+            await ctx.followup.send(
+                f"<@{user.id}> **YOU HAVE BEEN WHITELISTED FOR THE SCRIPT:** `{info.get('name') or 'LUREX script'}`\n"
                 f"**MANAGE YOUR SCRIPT:** {manage_link}\n"
                 "**PANEL:** Use the deployed panel in this channel.", ephemeral=False)
         else:
@@ -1124,18 +1124,28 @@ def _panel_embed(name, title=None, desc=None, color=None, config=None):
             col = int(str(color).strip().lstrip("#"), 16)
         except ValueError:
             col = COL_PROC
-    e = discord.Embed(title=title or f"{name} access panel",
-                      description=desc or PANEL_BLURB, color=col)
-    fields = [
-        ("Redeem Key", "Bind a key to your account.", "panel_show_redeem"),
-        ("Get Script", "Your ready-to-run loadstring.", "panel_show_get_script"),
-        ("Reset HWID", "Reset your device binding.", "panel_show_hwid"),
-        ("Get Buyer Role", "Unlock the buyer role.", "panel_show_buyer"),
-        ("Key Info", "Check your key status.", "panel_show_key_info"),
-    ]
-    for field_name, field_value, field_key in fields:
-        if config.get(field_key, True) and (field_key != "panel_show_hwid" or config.get("panel_hwid_resets", True)):
-            e.add_field(name=field_name, value=field_value, inline=True)
+    luarmor = bool(config.get("panel_luarmor_look", False))
+    if luarmor:
+        panel_title = "1 of 1 visual Control Panel"
+        panel_desc = (f"This control panel is for the script: **{name}**\n"
+                      "If you're a buyer, click on the buttons below to redeem your key, get the script or get your role")
+        if desc:
+            panel_desc += f"\n\n{desc}"
+    else:
+        panel_title = title or f"{name} access panel"
+        panel_desc = desc or f"Redeem a LUREX key to access the script: **{name}**."
+    e = discord.Embed(title=panel_title, description=panel_desc, color=col)
+    if not luarmor:
+        fields = [
+            ("Redeem Key", "Bind a key to your account.", "panel_show_redeem"),
+            ("Get Script", "Your ready-to-run loadstring.", "panel_show_get_script"),
+            ("Reset HWID", "Reset your device binding.", "panel_show_hwid"),
+            ("Get Buyer Role", "Unlock the buyer role.", "panel_show_buyer"),
+            ("Key Info", "Check your key status.", "panel_show_key_info"),
+        ]
+        for field_name, field_value, field_key in fields:
+            if config.get(field_key, True) and (field_key != "panel_show_hwid" or config.get("panel_hwid_resets", True)):
+                e.add_field(name=field_name, value=field_value, inline=True)
     e.set_footer(text=f"{BRAND} • secure script access")
     return e
 
@@ -1172,7 +1182,7 @@ class PanelView(discord.ui.View):
                 suffix = f":{self.role_id}" if action == "buyer_role" else ""
                 child.custom_id = f"lurexpanel:{action}:{self.project}{suffix}"[:100]
     def _button_label(self, emoji, text):
-        return f"{emoji} {text}" if self.config.get("panel_emojis") else text
+        return f"{emoji} {text}" if (self.config.get("panel_emojis") or self.config.get("panel_luarmor_look")) else text
     def _configure_buttons(self):
         visible = {
             "redeem": self.config.get("panel_show_redeem", True),
@@ -1181,9 +1191,10 @@ class PanelView(discord.ui.View):
             "buyer_role": self.config.get("panel_show_buyer", True),
             "key_info": self.config.get("panel_show_key_info", True),
         }
+        luarmor = bool(self.config.get("panel_luarmor_look", False))
         labels = {"redeem": ("🔑", "Redeem Key"), "get_script": ("📜", "Get Script"),
-                  "reset_hwid": ("🔄", "Reset HWID"), "buyer_role": ("✅", "Get Buyer Role"),
-                  "key_info": ("ℹ️", "Key Info")}
+                  "reset_hwid": ("⚙️", "Reset HWID"), "buyer_role": ("👤", "Get Role" if luarmor else "Get Buyer Role"),
+                  "key_info": ("📊", "Get Stats" if luarmor else "Key Info")}
         for child in list(self.children):
             callback = getattr(child.callback, "func", child.callback)
             name = getattr(callback, "__name__", "")
@@ -1192,6 +1203,8 @@ class PanelView(discord.ui.View):
                     self.remove_item(child)
                 else:
                     child.label = self._button_label(*labels[name])
+                    if luarmor:
+                        child.style = {"redeem": discord.ButtonStyle.success, "get_script": discord.ButtonStyle.primary, "buyer_role": discord.ButtonStyle.primary}.get(name, discord.ButtonStyle.secondary)
     async def _act(self, interaction, action, extra=None):
         payload = {"action": action, "project": self.project, "discord_id": str(interaction.user.id)}
         if extra:
@@ -1339,6 +1352,7 @@ async def deploy_panel_cmd(
     show_buyer: discord.Option(bool, description="Show Get Buyer Role", required=False, default=True),
     show_key_info: discord.Option(bool, description="Show Key Info", required=False, default=True),
     emojis: discord.Option(bool, description="Show emojis on buttons", required=False, default=False),
+    luarmor_look: discord.Option(bool, description="Use the Luarmor-style visual panel", required=False, default=False),
 ):
     await ctx.defer(ephemeral=True)
     if not _use_api():
@@ -1355,7 +1369,7 @@ async def deploy_panel_cmd(
                             "hwid_resets": hwid_resets, "show_redeem": show_redeem,
                             "show_get_script": show_get_script, "show_hwid": show_hwid,
                             "show_buyer": show_buyer, "show_key_info": show_key_info,
-                            "emojis": emojis})
+                            "emojis": emojis, "luarmor_look": luarmor_look})
         info = await _api_manage({"action": "panel_info", "project": project_id})
         await ctx.channel.send(
             embed=_panel_embed(info.get("name") or "script", info.get("panel_title"),
