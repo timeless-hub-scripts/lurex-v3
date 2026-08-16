@@ -1163,6 +1163,14 @@ class PanelView(discord.ui.View):
         self.role_id = role_id
         self.config = config or {}
         self._configure_buttons()
+        actions = {"redeem": "redeem", "get_script": "get_script", "reset_hwid": "reset_hwid", "buyer_role": "buyer_role", "key_info": "key_info"}
+        for child in self.children:
+            callback = getattr(child.callback, "func", child.callback)
+            name = getattr(callback, "__name__", "")
+            action = actions.get(name)
+            if action:
+                suffix = f":{self.role_id}" if action == "buyer_role" else ""
+                child.custom_id = f"lurexpanel:{action}:{self.project}{suffix}"[:100]
     def _button_label(self, emoji, text):
         return f"{emoji} {text}" if self.config.get("panel_emojis") else text
     def _configure_buttons(self):
@@ -1263,20 +1271,39 @@ class PanelView(discord.ui.View):
 async def _handle_website_panel_interaction(interaction):
     data = getattr(interaction, "data", None) or {}
     custom_id = data.get("custom_id")
-    if not isinstance(custom_id, str) or not custom_id.startswith("lurex:"):
+    if not isinstance(custom_id, str) or not (custom_id.startswith("lurex:") or custom_id.startswith("lurexpanel:")):
         return
-    parts = custom_id.split(":", 2)
-    if len(parts) != 3:
+    parts = custom_id.split(":")
+    if len(parts) < 3:
         return
-    action, project = parts[1], parts[2]
+    prefix, action, project = parts[:3]
+    role_id = parts[3] if len(parts) > 3 else None
     if action == "redeem":
         await interaction.response.send_modal(RedeemModal(project))
         return
-    if action not in {"get_script", "key_info"}:
+    if action not in {"get_script", "reset_hwid", "buyer_role", "key_info"}:
         return
     await interaction.response.defer(ephemeral=True)
     try:
-        result = await _api_manage({"action": action, "project": project, "discord_id": str(interaction.user.id)})
+        api_action = "buyer_check" if action == "buyer_role" else action
+        result = await _api_manage({"action": api_action, "project": project, "discord_id": str(interaction.user.id)})
+        if action == "reset_hwid":
+            await interaction.followup.send("HWID reset — your key will rebind on next launch.", ephemeral=True)
+            return
+        if action == "buyer_role":
+            if not result.get("eligible"):
+                await interaction.followup.send("Redeem a valid key or ask the owner to whitelist you first.", ephemeral=True)
+                return
+            role = interaction.guild.get_role(int(role_id)) if role_id and getattr(interaction, "guild", None) else None
+            if role is not None:
+                try:
+                    await interaction.user.add_roles(role, reason="LUREX: verified buyer")
+                    await interaction.followup.send(f"You now have **{role.name}**.", ephemeral=True)
+                except discord.Forbidden:
+                    await interaction.followup.send("I can't assign that role — move my role above it and grant Manage Roles.", ephemeral=True)
+            else:
+                await interaction.followup.send("Buyer access verified for this script. Ask the server owner to assign the buyer role if needed.", ephemeral=True)
+            return
         if action == "get_script":
             embed = discord.Embed(title="Your loader", color=COL_OK, description="Copy the value below into your executor:\n" + _loader_lines(result["loadstring"]))
         elif not result.get("redeemed"):
