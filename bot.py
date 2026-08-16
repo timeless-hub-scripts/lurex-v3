@@ -1259,6 +1259,40 @@ class PanelView(discord.ui.View):
                                       f"\nHWID: {'bound' if res.get('hwid_bound') else 'not bound'}\nHWID reset: {reset_txt}")
         e.set_footer(text=f"{BRAND} v{__version__}")
         await interaction.followup.send(embed=e, ephemeral=True)
+@bot.listen("on_interaction")
+async def _handle_website_panel_interaction(interaction):
+    data = getattr(interaction, "data", None) or {}
+    custom_id = data.get("custom_id")
+    if not isinstance(custom_id, str) or not custom_id.startswith("lurex:"):
+        return
+    parts = custom_id.split(":", 2)
+    if len(parts) != 3:
+        return
+    action, project = parts[1], parts[2]
+    if action == "redeem":
+        await interaction.response.send_modal(RedeemModal(project))
+        return
+    if action not in {"get_script", "key_info"}:
+        return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        result = await _api_manage({"action": action, "project": project, "discord_id": str(interaction.user.id)})
+        if action == "get_script":
+            embed = discord.Embed(title="Your loader", color=COL_OK, description="Copy the value below into your executor:\n" + _loader_lines(result["loadstring"]))
+        elif not result.get("redeemed"):
+            text = "This script is free or you are whitelisted — no key needed." if result.get("free") else "You have not redeemed a key yet."
+            await interaction.followup.send(text, ephemeral=True)
+            return
+        else:
+            reset_in = result.get("reset_in", 0)
+            reset_txt = "available now" if reset_in == 0 else f"in {reset_in // 3600}h {(reset_in % 3600) // 60}m"
+            embed = discord.Embed(title="Your key", color=COL_KEY, description=_copy_block("KEY", result.get("key")) + f"\\nHWID: {'bound' if result.get('hwid_bound') else 'not bound'}\\nHWID reset: {reset_txt}")
+        embed.set_footer(text=f"{BRAND} v{__version__}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as exc:
+        await interaction.followup.send(embed=_err_embed(f"```\\n{str(exc)[:300]}\\n```"), ephemeral=True)
+
+
 @deploy_group.command(name="panel", description="Post a customizable public control panel")
 async def deploy_panel_cmd(
     ctx,
