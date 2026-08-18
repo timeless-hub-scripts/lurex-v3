@@ -98,13 +98,26 @@ def _is_script_logged_in(ctx, script_id):
     return bool(getattr(ctx, "guild_id", None) and ACTIVE_SCRIPT_SESSIONS.get(_session_key(ctx, script_id)))
 
 
-async def _require_script_login(ctx, script_id):
+async def _require_script_login(ctx, script_id, role_field=None):
     if not getattr(ctx, "guild_id", None):
         await ctx.respond(embed=_err_embed("This command must be used inside a Discord server."), ephemeral=True)
         return False
     if not _is_script_logged_in(ctx, script_id):
         await ctx.respond(embed=_err_embed(f"This server is not logged in to `{script_id}`. Run `/login script_id:{script_id}` first."), ephemeral=True)
         return False
+    if role_field and getattr(ctx, "author", None):
+        try:
+            info = await _api_manage({"action": "info", "script_id": script_id})
+            configured_role = str(info.get(role_field) or "").strip()
+            if configured_role:
+                member_role_ids = {str(role.id) for role in getattr(ctx.author, "roles", [])}
+                is_admin = bool(getattr(getattr(ctx.author, "guild_permissions", None), "administrator", False))
+                if configured_role not in member_role_ids and not is_admin:
+                    await ctx.respond(embed=_err_embed(f"You need the configured Discord role for `{script_id}` to use this command."), ephemeral=True)
+                    return False
+        except Exception as exc:
+            await ctx.respond(embed=_err_embed(f"Could not verify the configured script role: {str(exc)[:250]}"), ephemeral=True)
+            return False
     return True
 
 
@@ -610,9 +623,6 @@ async def on_message(message):
     await _begin(message.author, "dm", att.filename, data, channel=message.channel)
 
 
-script_group = bot.create_group("script", "Inspect LUREX scripts")
-server_group = bot.create_group("server", "LUREX server utilities")
-setup_group = bot.create_group("setup", "LUREX setup utilities")
 
 
 async def create_script_cmd(ctx, file: discord.Option(discord.Attachment, description="Your .lua / .luau / .txt script")):
@@ -724,7 +734,7 @@ async def keys_cmd(
     if not script_id:
         await _show_script_picker(ctx, lambda interaction, selected: keys_cmd(interaction, action, selected, amount, key, label))
         return
-    if not await _require_script_login(ctx, script_id):
+    if not await _require_script_login(ctx, script_id, "admin_role"):
         return
     await ctx.defer(ephemeral=True)
     if not _use_api():
@@ -770,7 +780,7 @@ async def access_cmd(
     if not script_id:
         await _show_script_picker(ctx, lambda interaction, selected: access_cmd(interaction, action, selected, user))
         return
-    if not await _require_script_login(ctx, script_id):
+    if not await _require_script_login(ctx, script_id, "admin_role"):
         return
     await ctx.defer()
     if not _use_api():
@@ -832,7 +842,6 @@ async def customise_cmd(
         await ctx.respond(embed=_err_embed(f"```\n{str(exc)[:400]}\n```"), ephemeral=True)
 
 
-@script_group.command(name="info", description="Show hosted script information and its loader")
 async def script_info_cmd(
     ctx,
     script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
@@ -876,7 +885,7 @@ async def delkey_cmd(
     if not script_id:
         await _show_script_picker(ctx, lambda interaction, selected: delkey_cmd(interaction, selected, key))
         return
-    if not await _require_script_login(ctx, script_id):
+    if not await _require_script_login(ctx, script_id, "admin_role"):
         return
     await ctx.defer(ephemeral=True)
     try:
@@ -895,7 +904,7 @@ async def blacklist_cmd(
     if not script_id:
         await _show_script_picker(ctx, lambda interaction, selected: blacklist_cmd(interaction, selected, user))
         return
-    if not await _require_script_login(ctx, script_id):
+    if not await _require_script_login(ctx, script_id, "whitelist_role"):
         return
     await ctx.defer(ephemeral=True)
     try:
@@ -911,13 +920,12 @@ async def cmds_cmd(ctx):
     e = discord.Embed(title="LUREX commands", color=COL_IDLE, description=(
         "**Website**\nCreate scripts, configure panels, and assign server roles in the LUREX website.\n\n"
         "**Discord access**\n`/login` · `/logout` · `/gkey` · `/delkey` · `/whitelist` · `/blacklist` · `/kmassgen` · `/whitelist-role`\n\n"
-        "**Help**\n`/cmds` · `/server link` · `/setup guide`"
+        "**Help**\nUse the LUREX website for script and panel setup."
     ))
     e.set_footer(text=f"{BRAND} v{__version__}")
     await ctx.respond(embed=e, ephemeral=True)
 
 
-@server_group.command(name="link", description="Show the configured LUREX Discord invite")
 async def server_link_cmd(ctx):
     await ctx.defer(ephemeral=True)
     invite = os.environ.get("SERVER_INVITE") or os.environ.get("DISCORD_INVITE")
@@ -927,7 +935,6 @@ async def server_link_cmd(ctx):
         await ctx.respond(embed=_err_embed("No invite is configured. Set `SERVER_INVITE` on the bot service."), ephemeral=True)
 
 
-@setup_group.command(name="guide", description="Show the LUREX setup guide")
 async def setup_guide_cmd(ctx):
     await ctx.defer(ephemeral=True)
     e = discord.Embed(
@@ -970,8 +977,6 @@ async def _owner_discord_labels(user_id, server_id):
         pass
     return discord.utils.escape_markdown(str(user_label)), discord.utils.escape_markdown(str(server_label))
 
-owner_group = bot.create_group("owner", "Restricted LUREX owner tools")
-@owner_group.command(name="view", description="View the restricted LUREX owner audit")
 async def owner_view_cmd(ctx):
     await ctx.defer(ephemeral=True)
     if str(ctx.author.id) not in OWNER_VIEW_IDS:
@@ -1178,7 +1183,7 @@ async def kmassgen_cmd(
     if not script_id:
         await _show_script_picker(ctx, lambda interaction, selected: kmassgen_cmd(interaction, selected, amount, label))
         return
-    if not await _require_script_login(ctx, script_id):
+    if not await _require_script_login(ctx, script_id, "admin_role"):
         return
     await ctx.defer(ephemeral=True)
     try:
@@ -1200,7 +1205,7 @@ async def whitelist_role_cmd(
     if not script_id:
         await _show_script_picker(ctx, lambda interaction, selected: whitelist_role_cmd(interaction, selected, role))
         return
-    if not await _require_script_login(ctx, script_id):
+    if not await _require_script_login(ctx, script_id, "whitelist_role"):
         return
     await ctx.defer(ephemeral=True)
     members = list(role.members)
