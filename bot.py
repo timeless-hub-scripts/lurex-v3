@@ -610,17 +610,11 @@ async def on_message(message):
     await _begin(message.author, "dm", att.filename, data, channel=message.channel)
 
 
-create_group = bot.create_group("create", "Create and protect LUREX resources")
-deploy_group = bot.create_group("deploy", "Deploy LUREX resources")
-manage_group = bot.create_group("manage", "Manage LUREX resources")
-delete_group = bot.create_group("delete", "Delete LUREX resources")
 script_group = bot.create_group("script", "Inspect LUREX scripts")
 server_group = bot.create_group("server", "LUREX server utilities")
 setup_group = bot.create_group("setup", "LUREX setup utilities")
-edit_group = bot.create_group("edit", "Edit LUREX resources")
 
 
-@create_group.command(name="script", description="Protect and host a Lua/Luau script")
 async def create_script_cmd(ctx, file: discord.Option(discord.Attachment, description="Your .lua / .luau / .txt script")):
     if not file.filename.lower().endswith(ALLOWED_EXT):
         await ctx.respond(embed=_err_embed("Please attach a `.lua`, `.luau`, or `.txt` file."), ephemeral=True)
@@ -632,7 +626,6 @@ async def create_script_cmd(ctx, file: discord.Option(discord.Attachment, descri
     await _begin(ctx.author, "slash", file.filename, data, ctx=ctx)
 
 
-@manage_group.command(name="scripts", description="Update, freeze, or delete a hosted script")
 async def manage_scripts_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["info", "update", "freeze", "unfreeze", "free", "paid", "delete"]),
@@ -723,11 +716,16 @@ async def logout_cmd(ctx, script_id: discord.Option(str, description="Your SCRIP
 async def keys_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["generate", "list", "delete"]),
-    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
+    script_id: discord.Option(str, description="Optional SCRIPT_ID-; leave blank to choose a script preview", required=False, default=None),
     amount: discord.Option(int, description="How many keys to generate", required=False, default=1),
     key: discord.Option(str, description="Key to delete", required=False, default=None),
     label: discord.Option(str, description="Optional label for generated keys", required=False, default=None),
 ):
+    if not script_id:
+        await _show_script_picker(ctx, lambda interaction, selected: keys_cmd(interaction, action, selected, amount, key, label))
+        return
+    if not await _require_script_login(ctx, script_id):
+        return
     await ctx.defer(ephemeral=True)
     if not _use_api():
         await ctx.respond(embed=_err_embed("Keys need the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
@@ -766,9 +764,14 @@ async def keys_cmd(
 async def access_cmd(
     ctx,
     action: discord.Option(str, description="What to do", choices=["whitelist", "blacklist", "clear", "list"]),
-    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
+    script_id: discord.Option(str, description="Optional SCRIPT_ID-; leave blank to choose a script preview", required=False, default=None),
     user: discord.Option(discord.User, description="Target user", required=False, default=None),
 ):
+    if not script_id:
+        await _show_script_picker(ctx, lambda interaction, selected: access_cmd(interaction, action, selected, user))
+        return
+    if not await _require_script_login(ctx, script_id):
+        return
     await ctx.defer()
     if not _use_api():
         await ctx.respond(embed=_err_embed("Access control needs the hosted API — set `OBF_BACKEND=api`."), ephemeral=True)
@@ -852,7 +855,6 @@ async def script_info_cmd(
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
 
-@delete_group.command(name="script", description="Delete a hosted script")
 async def delete_script_cmd(
     ctx,
     script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
@@ -868,9 +870,14 @@ async def delete_script_cmd(
 @bot.slash_command(name="delkey", description="Delete one access key from a script", guild_ids=GUILD_IDS)
 async def delkey_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
+    script_id: discord.Option(str, description="Optional SCRIPT_ID-; leave blank to choose a script preview", required=False, default=None),
     key: discord.Option(str, description="The access key to delete"),
 ):
+    if not script_id:
+        await _show_script_picker(ctx, lambda interaction, selected: delkey_cmd(interaction, selected, key))
+        return
+    if not await _require_script_login(ctx, script_id):
+        return
     await ctx.defer(ephemeral=True)
     try:
         res = await _api_manage({"action": "delkey", "script_id": script_id, "key": key})
@@ -882,9 +889,14 @@ async def delkey_cmd(
 @bot.slash_command(name="blacklist", description="Blacklist a Discord user for a script", guild_ids=GUILD_IDS)
 async def blacklist_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
+    script_id: discord.Option(str, description="Optional SCRIPT_ID-; leave blank to choose a script preview", required=False, default=None),
     user: discord.Option(discord.User, description="Target user"),
 ):
+    if not script_id:
+        await _show_script_picker(ctx, lambda interaction, selected: blacklist_cmd(interaction, selected, user))
+        return
+    if not await _require_script_login(ctx, script_id):
+        return
     await ctx.defer(ephemeral=True)
     try:
         await _api_manage({"action": "blacklist", "script_id": script_id, "discord_id": str(user.id)})
@@ -897,9 +909,8 @@ async def blacklist_cmd(
 async def cmds_cmd(ctx):
     await ctx.defer(ephemeral=True)
     e = discord.Embed(title="LUREX commands", color=COL_IDLE, description=(
-        "**Create**\n`/create script`\n\n"
-        "**Deploy & manage**\n`/deploy panel` · `/script info` · `/manage scripts` · `/delete script`\n\n"
-        "**Keys & access**\n`/gkey` · `/kmassgen` · `/delkey` · `/whitelist` · `/blacklist` · `/whitelist-role`\n\n"
+        "**Website**\nCreate scripts, configure panels, and assign server roles in the LUREX website.\n\n"
+        "**Discord access**\n`/login` · `/logout` · `/gkey` · `/delkey` · `/whitelist` · `/blacklist` · `/kmassgen` · `/whitelist-role`\n\n"
         "**Help**\n`/cmds` · `/server link` · `/setup guide`"
     ))
     e.set_footer(text=f"{BRAND} v{__version__}")
@@ -1002,7 +1013,7 @@ class ScriptSelectView(discord.ui.View):
             sid = str(item.get("sid") or "")
             name = str(item.get("name") or "script")
             if sid:
-                options.append(discord.SelectOption(label=sid[:100], value=sid[:100], description=f"SCRIPT: {name}"[:100]))
+                options.append(discord.SelectOption(label=name[:100], value=sid[:100], description=f"{sid} · press to select"[:100]))
         if not options:
             options = [discord.SelectOption(label="No scripts found", value="none", description="Create a script first")]
         picker = discord.ui.Select(placeholder="Choose a script", options=options)
@@ -1018,7 +1029,7 @@ class ScriptSelectView(discord.ui.View):
     async def _selected(self, interaction):
         selected = interaction.data.get("values", [""])[0]
         if selected == "none":
-            await interaction.response.send_message("No scripts found. Use `/create script` first.", ephemeral=True)
+            await interaction.response.send_message("No scripts found. Create scripts from the LUREX website first.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
         try:
@@ -1031,13 +1042,12 @@ async def _show_script_picker(ctx, callback):
     res = await _api_manage({"action": "list_mine", "actor_id": str(ctx.author.id)})
     scripts = res.get("scripts", [])
     if not scripts:
-        await ctx.respond(embed=_err_embed("No scripts found for your Discord account. Create one with `/create script` first."), ephemeral=True)
+        await ctx.respond(embed=_err_embed("No scripts found for your Discord account. Create scripts from the LUREX website first."), ephemeral=True)
         return
     await ctx.respond(embed=discord.Embed(title="Select a LUREX script", color=COL_PROC,
-                                           description="Choose the `SCRIPT_ID-...` entry you want to manage."),
+                                           description="Choose a script preview. Each option shows the script name and its SCRIPT_ID-."),
                        view=ScriptSelectView(ctx.author.id, scripts, callback), ephemeral=True)
 
-@bot.slash_command(name="setadmin", description="Give a member or role owner-style script management access", guild_ids=GUILD_IDS)
 async def setadmin_cmd(
     ctx,
     owner_key: discord.Option(str, description="Your private OWNER- credential"),
@@ -1058,7 +1068,6 @@ async def setadmin_cmd(
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
-@bot.slash_command(name="setwl", description="Set who may manage whitelist, blacklist, and keys", guild_ids=GUILD_IDS)
 async def setwl_cmd(
     ctx,
     owner_key: discord.Option(str, description="Your private OWNER- credential"),
@@ -1080,7 +1089,6 @@ async def setwl_cmd(
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
-@bot.slash_command(name="rmwl", description="Revoke a member or role's whitelist-management permissions", guild_ids=GUILD_IDS)
 async def rmwl_cmd(
     ctx,
     owner_key: discord.Option(str, description="Your private OWNER- credential"),
@@ -1100,7 +1108,6 @@ async def rmwl_cmd(
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
 
-@edit_group.command(name="panel", description="Edit the saved panel look for one of your scripts")
 async def edit_panel_cmd(
     ctx,
     title: discord.Option(str, description="Panel title", required=False, default=None),
@@ -1124,7 +1131,6 @@ async def edit_panel_cmd(
         await interaction.followup.send(f"Panel settings saved for `{script_id}`. Use `/deploy panel` to post it.", ephemeral=True)
     await _show_script_picker(ctx, save_panel)
 
-@bot.slash_command(name="admin", description="Use delegated project-management permissions", guild_ids=GUILD_IDS)
 async def admin_cmd(
     ctx,
     action: discord.Option(str, description="Management action", choices=["info", "freeze", "unfreeze", "free", "paid", "keys", "generate", "whitelist", "blacklist", "clear"]),
@@ -1165,10 +1171,15 @@ async def admin_cmd(
 @bot.slash_command(name="kmassgen", description="Generate up to 100 access keys at once", guild_ids=GUILD_IDS)
 async def kmassgen_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
+    script_id: discord.Option(str, description="Optional SCRIPT_ID-; leave blank to choose a script preview", required=False, default=None),
     amount: discord.Option(int, description="Number of keys", required=False, default=10),
     label: discord.Option(str, description="Optional label", required=False, default=None),
 ):
+    if not script_id:
+        await _show_script_picker(ctx, lambda interaction, selected: kmassgen_cmd(interaction, selected, amount, label))
+        return
+    if not await _require_script_login(ctx, script_id):
+        return
     await ctx.defer(ephemeral=True)
     try:
         res = await _api_manage({"action": "genkey", "script_id": script_id, "count": max(1, min(amount, 100)), "label": label})
@@ -1183,9 +1194,14 @@ async def kmassgen_cmd(
 @bot.slash_command(name="whitelist-role", description="Whitelist every member of a Discord role", guild_ids=GUILD_IDS)
 async def whitelist_role_cmd(
     ctx,
-    script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
+    script_id: discord.Option(str, description="Optional SCRIPT_ID-; leave blank to choose a script preview", required=False, default=None),
     role: discord.Option(discord.Role, description="Role whose members should be whitelisted"),
 ):
+    if not script_id:
+        await _show_script_picker(ctx, lambda interaction, selected: whitelist_role_cmd(interaction, selected, role))
+        return
+    if not await _require_script_login(ctx, script_id):
+        return
     await ctx.defer(ephemeral=True)
     members = list(role.members)
     if not members:
@@ -1421,7 +1437,6 @@ async def _handle_website_panel_interaction(interaction):
         await interaction.followup.send(embed=_err_embed(f"```\n{str(exc)[:300]}\n```"), ephemeral=True)
 
 
-@deploy_group.command(name="panel", description="Post a customizable public control panel")
 async def deploy_panel_cmd(
     ctx,
     script_id: discord.Option(str, description="Your SCRIPT_ID- for this script"),
