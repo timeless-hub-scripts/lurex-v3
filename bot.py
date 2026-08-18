@@ -41,6 +41,11 @@ OWNER_VIEW_IDS = {x.strip() for x in os.environ.get("OWNER_VIEW_IDS", "").split(
 GUILD_IDS = [int(g) for g in os.environ.get("GUILD_IDS", "").replace(" ", "").split(",") if g.isdigit()] or None
 ALLOWED_EXT = (".lua", ".luau", ".txt")
 
+# Website-created scripts are linked to a Discord server explicitly with /login.
+# Sessions are scoped by guild and script, so logging in one server never grants
+# access to another server or another script.
+ACTIVE_SCRIPT_SESSIONS = {}
+
 BRAND = "LUREX"
 COL_PROC = 0x5865F2
 COL_OK = 0x57F287
@@ -83,6 +88,24 @@ async def _api_manage(payload):
     if not _use_api():
         raise RuntimeError("Hosted management needs the API backend (set OBF_BACKEND=api and API_URL).")
     return await _api_call(payload)
+
+
+def _session_key(ctx, script_id):
+    return (str(getattr(ctx, "guild_id", "") or ""), str(script_id or "").strip())
+
+
+def _is_script_logged_in(ctx, script_id):
+    return bool(getattr(ctx, "guild_id", None) and ACTIVE_SCRIPT_SESSIONS.get(_session_key(ctx, script_id)))
+
+
+async def _require_script_login(ctx, script_id):
+    if not getattr(ctx, "guild_id", None):
+        await ctx.respond(embed=_err_embed("This command must be used inside a Discord server."), ephemeral=True)
+        return False
+    if not _is_script_logged_in(ctx, script_id):
+        await ctx.respond(embed=_err_embed(f"This server is not logged in to `{script_id}`. Run `/login script_id:{script_id}` first."), ephemeral=True)
+        return False
+    return True
 
 
 intents = discord.Intents.default()
@@ -228,6 +251,8 @@ class Session:
         self.name = self.default_name
         self.silent = False
         self.full_protect = True
+        self.engine = "LUREX"
+        self.preset = "Strong"
         self.free = False
 
 
@@ -303,7 +328,8 @@ async def _animate(responder, state):
 
 async def _do(responder, session):
     opts = {"target": "executor", "name": session.name,
-            "silent": session.silent, "fast": not session.full_protect, "free": session.free}
+            "silent": session.silent, "fast": not session.full_protect, "free": session.free,
+            "engine": session.engine, "preset": session.preset}
     state = {"stage": "Reading source", "pct": 2.0, "target": 22.0, "done": False}
     anim = asyncio.create_task(_animate(responder, state))
     start = time.time()
@@ -404,11 +430,11 @@ def _mode_embed(session):
 
 
 def _protection_embed(session):
-    state = "FULL PROTECT" if session.full_protect else "SILENT MODE"
+    state = "PROMETHEUS" if session.engine == "PROMETHEUS" else ("FULL PROTECT" if session.full_protect else "SILENT MODE")
     e = discord.Embed(title=f"{session.name} · protection", color=COL_PROC,
                       description=(f"Access: **{'FREE MODE 🆓' if session.free else 'PAID MODE 🔐'}**\n"
                                    f"Selected: **{state}**\n\n"
-                                   "Choose one protection mode, then press **NEXT**."))
+                                   "Choose one protection mode, then press **NEXT**. Prometheus uses AST-based Lua/Luau obfuscation."))
     e.set_footer(text=f"{BRAND} v{__version__}")
     return e
 
@@ -470,19 +496,28 @@ class ProtectionView(discord.ui.View):
     async def _refresh(self, interaction):
         await interaction.response.edit_message(embed=_protection_embed(self.session), view=self)
 
-    @discord.ui.button(label="FULL PROTECT", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="FULL PROTECT (LUREX)", style=discord.ButtonStyle.primary, row=0)
     async def full_protect(self, a, b):
+        self.session.engine = "LUREX"
         self.session.full_protect = True
         self.session.silent = False
         await self._refresh(_interaction(a, b))
 
-    @discord.ui.button(label="SILENT MODE", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="PROMETHEUS", style=discord.ButtonStyle.primary, row=0)
+    async def prometheus(self, a, b):
+        self.session.engine = "PROMETHEUS"
+        self.session.full_protect = True
+        self.session.silent = False
+        await self._refresh(_interaction(a, b))
+
+    @discord.ui.button(label="SILENT MODE", style=discord.ButtonStyle.secondary, row=1)
     async def silent_mode(self, a, b):
+        self.session.engine = "LUREX"
         self.session.full_protect = False
         self.session.silent = True
         await self._refresh(_interaction(a, b))
 
-    @discord.ui.button(label="NEXT", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="NEXT", style=discord.ButtonStyle.success, row=1)
     async def next_step(self, a, b):
         interaction = _interaction(a, b)
         self.stop()
@@ -660,6 +695,30 @@ async def manage_scripts_cmd(
         await ctx.respond("Script **deleted** — its loadstring is now dead.", ephemeral=True)
 
 
+@bot.slash_command(name="login", description="Log this Discord server into a website-created LUREX script", guild_ids=GUILD_IDS)
+async def login_cmd(ctx, script_id: discord.Option(str, description="Your SCRIPT_ID- for this script")):
+    await ctx.defer()
+    if not getattr(ctx, "guild_id", None):
+        await ctx.respond("Run `/login` inside the server you want to connect.")
+        return
+    try:
+        info = await _api_manage({"action": "info", "script_id": script_id})
+        ACTIVE_SCRIPT_SESSIONS[_session_key(ctx, script_id)] = {"script_id": str(script_id), "guild_id": str(ctx.guild_id), "name": info.get("name") or "script", "logged_in_at": int(time.time())}
+        await ctx.respond(f"**LOGGED IN**\nThis server is now connected to **{info.get('name') or 'script'}** (`{script_id}`).")
+    except Exception as exc:
+        await ctx.respond(embed=_err_embed(f"Could not log this server into `{script_id}`.\n```\n{str(exc)[:350]}\n```"))
+
+
+@bot.slash_command(name="logout", description="Log this Discord server out of a LUREX script", guild_ids=GUILD_IDS)
+async def logout_cmd(ctx, script_id: discord.Option(str, description="Your SCRIPT_ID- for this script")):
+    await ctx.defer()
+    key = _session_key(ctx, script_id)
+    if ACTIVE_SCRIPT_SESSIONS.pop(key, None):
+        await ctx.respond(f"**LOGGED OUT**\nThis server is no longer connected to `{script_id}`.")
+    else:
+        await ctx.respond(f"This server is not logged in to `{script_id}`.")
+
+
 @bot.slash_command(name="gkey", description="Generate, list or delete keys for your script", guild_ids=GUILD_IDS)
 async def keys_cmd(
     ctx,
@@ -742,6 +801,32 @@ async def access_cmd(
             await ctx.respond(f"<@{user.id}> was {verb}.", ephemeral=True)
     except Exception as e:
         await ctx.respond(embed=_err_embed(f"```\n{str(e)[:400]}\n```"), ephemeral=True)
+
+
+@bot.slash_command(name="customise", description="Optionally customise LUREX for this server", guild_ids=GUILD_IDS)
+async def customise_cmd(
+    ctx,
+    display_name: discord.Option(str, description="Server display name; only this server changes", required=False, default=None),
+):
+    await ctx.defer(ephemeral=True)
+    if not ctx.guild:
+        await ctx.respond("Run `/customise` inside a Discord server.", ephemeral=True)
+        return
+    if not getattr(ctx.author.guild_permissions, "manage_guild", False) and not getattr(ctx.author.guild_permissions, "administrator", False):
+        await ctx.respond("You need Manage Server or Administrator permission to customise LUREX here.", ephemeral=True)
+        return
+    changed = []
+    try:
+        if display_name is not None:
+            me = ctx.guild.me
+            if me is None:
+                raise RuntimeError("I could not find my member record in this server.")
+            await me.edit(nick=display_name.strip() or None)
+            changed.append("server display name")
+        lines = [f"Updated: {', '.join(changed)} in {ctx.guild.name}." if changed else "No server display name was changed."]
+        await ctx.respond("\n".join(lines), ephemeral=True)
+    except Exception as exc:
+        await ctx.respond(embed=_err_embed(f"```\n{str(exc)[:400]}\n```"), ephemeral=True)
 
 
 @script_group.command(name="info", description="Show hosted script information and its loader")
@@ -1126,9 +1211,8 @@ def _panel_embed(name, title=None, desc=None, color=None, config=None):
             col = COL_PROC
     luarmor = bool(config.get("panel_luarmor_look", False))
     if luarmor:
-        panel_title = "1 of 1 visual Control Panel"
-        panel_desc = (f"This control panel is for the script: **{name}**\n"
-                      "If you're a buyer, click on the buttons below to redeem your key, get the script or get your role")
+        panel_title = f"{name} Control Panel"
+        panel_desc = "If you're a buyer, click on the buttons below to redeem your key, get the script or get your role."
         if desc:
             panel_desc += f"\n\n{desc}"
     else:
@@ -1330,11 +1414,11 @@ async def _handle_website_panel_interaction(interaction):
         else:
             reset_in = result.get("reset_in", 0)
             reset_txt = "available now" if reset_in == 0 else f"in {reset_in // 3600}h {(reset_in % 3600) // 60}m"
-            embed = discord.Embed(title="Your key", color=COL_KEY, description=_copy_block("KEY", result.get("key")) + f"\\nHWID: {'bound' if result.get('hwid_bound') else 'not bound'}\\nHWID reset: {reset_txt}")
+            embed = discord.Embed(title="Your key", color=COL_KEY, description=_copy_block("KEY", result.get("key")) + f"\nHWID: {'bound' if result.get('hwid_bound') else 'not bound'}\nHWID reset: {reset_txt}")
         embed.set_footer(text=f"{BRAND} v{__version__}")
         await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as exc:
-        await interaction.followup.send(embed=_err_embed(f"```\\n{str(exc)[:300]}\\n```"), ephemeral=True)
+        await interaction.followup.send(embed=_err_embed(f"```\n{str(exc)[:300]}\n```"), ephemeral=True)
 
 
 @deploy_group.command(name="panel", description="Post a customizable public control panel")
