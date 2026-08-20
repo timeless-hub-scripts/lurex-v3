@@ -90,8 +90,19 @@ async def _api_manage(payload):
     return await _api_call(payload)
 
 
+def _canonical_script_id(script_id):
+    value = str(script_id or "").strip().strip("`")
+    if value.lower().startswith("script_id:"):
+        value = value.split(":", 1)[1].strip()
+    if value.lower().startswith("script_id-"):
+        return "SCRIPT_ID-" + value.split("-", 1)[1]
+    if value and not value.upper().startswith("SCRIPT_ID-"):
+        return "SCRIPT_ID-" + value
+    return value
+
+
 def _session_key(ctx, script_id):
-    return (str(getattr(ctx, "guild_id", "") or ""), str(script_id or "").strip())
+    return (str(getattr(ctx, "guild_id", "") or ""), _canonical_script_id(script_id))
 
 
 def _is_script_logged_in(ctx, script_id):
@@ -99,6 +110,7 @@ def _is_script_logged_in(ctx, script_id):
 
 
 async def _require_script_login(ctx, script_id, role_field=None):
+    script_id = _canonical_script_id(script_id)
     if not getattr(ctx, "guild_id", None):
         await ctx.respond(embed=_err_embed("This command must be used inside a Discord server."), ephemeral=True)
         return False
@@ -665,9 +677,10 @@ async def login_cmd(ctx, script_id: discord.Option(str, description="Your SCRIPT
         await ctx.respond("Run `/login` inside the server you want to connect.")
         return
     try:
-        info = await _api_manage({"action": "info", "script_id": script_id})
-        ACTIVE_SCRIPT_SESSIONS[_session_key(ctx, script_id)] = {"script_id": str(script_id), "guild_id": str(ctx.guild_id), "name": info.get("name") or "script", "logged_in_at": int(time.time())}
-        await ctx.respond(f"**LOGGED IN**\nThis server is now connected to **{info.get('name') or 'script'}** (`{script_id}`).")
+        canonical_id = _canonical_script_id(script_id)
+        info = await _api_manage({"action": "info", "script_id": canonical_id})
+        ACTIVE_SCRIPT_SESSIONS[_session_key(ctx, canonical_id)] = {"script_id": canonical_id, "guild_id": str(ctx.guild_id), "name": info.get("name") or "script", "logged_in_at": int(time.time())}
+        await ctx.respond(f"**LOGGED IN**\nThis server is now connected to **{info.get('name') or 'script'}** (`{canonical_id}`).")
     except Exception as exc:
         await ctx.respond(embed=_err_embed(f"Could not log this server into `{script_id}`.\n```\n{str(exc)[:350]}\n```"))
 
@@ -675,11 +688,12 @@ async def login_cmd(ctx, script_id: discord.Option(str, description="Your SCRIPT
 @bot.slash_command(name="logout", description="Log this Discord server out of a LUREX script", guild_ids=GUILD_IDS)
 async def logout_cmd(ctx, script_id: discord.Option(str, description="Your SCRIPT_ID- for this script")):
     await ctx.defer()
-    key = _session_key(ctx, script_id)
+    canonical_id = _canonical_script_id(script_id)
+    key = _session_key(ctx, canonical_id)
     if ACTIVE_SCRIPT_SESSIONS.pop(key, None):
-        await ctx.respond(f"**LOGGED OUT**\nThis server is no longer connected to `{script_id}`.")
+        await ctx.respond(f"**LOGGED OUT**\nThis server is no longer connected to `{canonical_id}`.")
     else:
-        await ctx.respond(f"This server is not logged in to `{script_id}`.")
+        await ctx.respond(f"This server is not logged in to `{canonical_id}`.")
 
 
 @bot.slash_command(name="gkey", description="Generate, list or delete keys for your script", guild_ids=GUILD_IDS)
